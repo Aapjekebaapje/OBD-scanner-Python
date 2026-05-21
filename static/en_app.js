@@ -1,5 +1,7 @@
-const CONNECTED_POLL_MS = 900;
-const DISCONNECTED_POLL_MS = 1200;
+const CONNECTED_POLL_MS = 200;
+const DISCONNECTED_POLL_MS = 1000;
+const FAST_GAUGE_POLL_MS = 50;
+const IDLE_GAUGE_POLL_MS = 250;
 const TACH_MIN_DEG = 135;
 const TACH_MAX_DEG = 405;
 const TACH_MAX_RPM = 8000;
@@ -11,6 +13,8 @@ const PORT_POLL_MS = 1000;
 
 let safeMode = true;
 let pollTimer = null;
+let gaugePollTimer = null;
+let gaugeRequestInFlight = false;
 let portPollTimer = null;
 let isConnected = false;
 let currentRpm = 0;
@@ -51,15 +55,18 @@ let demoMode = false;
 let demoPreset = "idle";
 let demoPresetRequestPending = false;
 let limitedMode = false;
+let simpleMode = false;
 const rpmChartPoints = [];
 const speedChartPoints = [];
 const CHART_POINT_LIMIT = 60;
+const VEHICLE_LOOKUP_HISTORY_KEY = "obd_vehicle_lookup_history";
+const VEHICLE_LOOKUP_HISTORY_LIMIT = 10;
 const demoPresetMeta = new Map();
 let lastChartSampleAt = 0;
-const GAUGE_STIFFNESS = 14;
-const GAUGE_DAMPING = 0.72;
-const RPM_MAX_VELOCITY = 7200;
-const SPEED_MAX_VELOCITY = 220;
+const GAUGE_STIFFNESS = 55;
+const GAUGE_DAMPING = 0.86;
+const RPM_MAX_VELOCITY = 22000;
+const SPEED_MAX_VELOCITY = 900;
 
 function byId(id) {
     return document.getElementById(id);
@@ -515,6 +522,9 @@ async function fetchFullData() {
     updateReadiness(displayPayload.readiness || payload.readiness || {});
     updateFreezeFrame(displayPayload.freeze_frame || payload.freeze_frame || {});
     updateReport(displayPayload.report || payload.report || {});
+    updateBatteryCheck(displayPayload.battery_check || payload.battery_check || {});
+    updateSimpleSummary(displayPayload.simple_summary || payload.simple_summary || {});
+    updatePidSupportSummary(displayPayload.pid_support || payload.pid_support || {});
     updateDtcStatus(displayPayload.dtc_status || payload.dtc_status || {});
 
     if (!isFrozen) {
@@ -745,6 +755,43 @@ function scheduleNextPoll() {
     pollTimer = window.setTimeout(fetchData, isConnected ? CONNECTED_POLL_MS : DISCONNECTED_POLL_MS);
 }
 
+function scheduleGaugePoll(delay = FAST_GAUGE_POLL_MS) {
+    window.clearTimeout(gaugePollTimer);
+    gaugePollTimer = window.setTimeout(fetchGaugeData, delay);
+}
+
+async function fetchGaugeData() {
+    if (gaugeRequestInFlight) {
+        scheduleGaugePoll(FAST_GAUGE_POLL_MS);
+        return;
+    }
+
+    gaugeRequestInFlight = true;
+    try {
+        const response = await fetch("/api/gauges", {
+            signal: AbortSignal.timeout(1000)
+        });
+        if (!response.ok) throw new Error(`Server returned status ${response.status}`);
+
+        const payload = await response.json();
+        const vehicle = {
+            rpm: payload.rpm || {},
+            speed: payload.speed || {},
+        };
+
+        if (!isFrozen && (payload.connected || payload.demo_mode)) {
+            updateGaugeTargets(vehicle);
+            updateCharts(vehicle);
+        }
+
+        scheduleGaugePoll((payload.connected || payload.demo_mode) ? FAST_GAUGE_POLL_MS : IDLE_GAUGE_POLL_MS);
+    } catch (error) {
+        scheduleGaugePoll(IDLE_GAUGE_POLL_MS);
+    } finally {
+        gaugeRequestInFlight = false;
+    }
+}
+
 function updateStatus(status, sessionState = {}) {
     const dot = byId("status-dot");
     const reconnectButton = byId("reconnect-button");
@@ -928,12 +975,19 @@ function updateGaugeTargets(vehicle) {
     const nextRpm = numberFromValue(vehicle.rpm?.value);
     const nextSpeed = numberFromValue(vehicle.speed?.value);
 
-    targetRpm = nextRpm;
-    targetSpeed = nextSpeed;
+    targetRpm = nextRpm ?? 0;
+    targetSpeed = nextSpeed ?? 0;
 }
 
 function smoothGaugeValue(current, target, velocity, dt, maxVelocity) {
     const difference = target - current;
+    if (Math.abs(difference) > maxVelocity * 0.25) {
+        return {
+            current: target,
+            velocity: 0,
+        };
+    }
+
     const nextVelocity = clamp(
         (velocity + difference * GAUGE_STIFFNESS * dt) * Math.pow(GAUGE_DAMPING, dt * 60),
         -maxVelocity,
@@ -1301,6 +1355,82 @@ function updateReport(report) {
             row.querySelector("p").textContent = (section.items || []).join(" | ");
         });
     }
+}
+
+function updateBatteryCheck(battery) {
+    const badge = byId("battery-status-badge");
+    const status = battery.status || "unknown";
+
+    setText("battery-headline", battery.headline || tr("battery_unavailable", "Battery check unavailable"));
+    setText("battery-detail", battery.detail || tr("battery_empty", "Voltage data is not available yet."));
+
+    if (badge) {
+        badge.className = `health-status-badge status-${status === "unknown" ? "info" : status}`;
+        badge.textContent = status === "good"
+            ? tr("health_good", "Good")
+            : status === "warning"
+                ? tr("health_check", "Check")
+                : status === "danger"
+                    ? tr("health_attention", "Attention")
+                    : tr("unknown", "Unknown");
+    }
+}
+
+function updateSimpleSummary(summary) {
+    const panel = byId("simple-summary-panel");
+    const list = byId("simple-summary-list");
+    const button = byId("simple-mode-button");
+    if (!panel || !list) return;
+
+    panel.hidden = !simpleMode;
+    if (button) {
+        button.classList.toggle("is-active", simpleMode);
+        button.setAttribute("aria-pressed", String(simpleMode));
+        button.textContent = simpleMode ? tr("simple_mode_hide", "Hide Simple Mode") : tr("simple_mode_show", "Show Simple Mode");
+    }
+    if (!simpleMode) return;
+
+    setText("simple-summary-headline", summary.headline || tr("simple_summary_unavailable", "Simple summary unavailable."));
+    list.replaceChildren();
+    (summary.items || []).forEach((item, index) => {
+        const row = document.createElement("div");
+        row.className = `checklist-item level-${summary.level || "info"}`;
+        row.style.animationDelay = `${Math.min(index * 20, 180)}ms`;
+        row.innerHTML = `<strong>${summary.headline || tr("simple_summary", "Simple summary")}</strong><p></p>`;
+        row.querySelector("p").textContent = item;
+        list.appendChild(row);
+    });
+}
+
+function updatePidSupportSummary(support) {
+    const container = byId("pid-support-summary");
+    if (!container) return;
+
+    const supported = support.supported_count ?? 0;
+    const unsupported = support.unsupported_count ?? 0;
+    const total = support.total ?? supported + unsupported;
+
+    const cards = [
+        { label: tr("pid_supported", "Supported"), value: supported },
+        { label: tr("pid_unsupported", "Unsupported"), value: unsupported },
+        { label: tr("pid_total", "Total checked"), value: total }
+    ];
+
+    container.replaceChildren();
+    cards.forEach((card) => {
+        const element = document.createElement("div");
+        element.innerHTML = `<span>${card.value}</span><p>${card.label}</p>`;
+        container.appendChild(element);
+    });
+}
+
+function toggleSimpleMode() {
+    simpleMode = !simpleMode;
+    updateSimpleSummary(lastLivePayload?.simple_summary || {});
+}
+
+function exportScanReport() {
+    window.location.href = "/api/report/export";
 }
 
 function formatEngine(decoded) {
@@ -1799,6 +1929,11 @@ async function savePlateLookup(event) {
         const result = await response.json();
         updateVehicleProfileView(result.vehicle_profile || {});
         if (!response.ok || !result.success) throw new Error(result.message || `Server returned status ${response.status}`);
+        saveVehicleLookupHistory({
+            type: "plate",
+            value: plateInput.value.trim().toUpperCase(),
+            label: tr("history_type_plate", "Plate")
+        });
     } catch (error) {
         console.error(error);
         resultElement.innerText = error.message || tr("rdw_lookup_failed", "RDW lookup failed.");
@@ -1830,6 +1965,11 @@ async function saveManualVin(event) {
         const result = await response.json();
         updateVehicleProfileView(result.vehicle_profile || {});
         if (!response.ok || !result.success) throw new Error(result.message || `Server returned status ${response.status}`);
+        saveVehicleLookupHistory({
+            type: "vin",
+            value: vinInput.value.trim().toUpperCase(),
+            label: tr("history_type_vin", "VIN")
+        });
         resultElement.innerText = result.message || tr("vin_found", "VIN found.");
     } catch (error) {
         console.error(error);
@@ -1850,6 +1990,95 @@ function clearManualVinInput() {
     if (resultElement) {
         resultElement.innerText = tr("vin_input_cleared", "VIN input cleared.");
     }
+}
+
+function loadVehicleLookupHistory() {
+    try {
+        const stored = window.localStorage.getItem(VEHICLE_LOOKUP_HISTORY_KEY);
+        const items = stored ? JSON.parse(stored) : [];
+        return Array.isArray(items) ? items : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveVehicleLookupHistory(entry) {
+    const value = String(entry.value || "").trim();
+    if (!value) return;
+
+    const history = loadVehicleLookupHistory();
+    const normalizedValue = value.toUpperCase();
+    const existingIndex = history.findIndex((item) => item.type === entry.type && item.value === normalizedValue);
+    if (existingIndex !== -1) {
+        history.splice(existingIndex, 1);
+    }
+
+    history.unshift({
+        type: entry.type,
+        value: normalizedValue,
+        label: entry.label,
+        created_at: new Date().toISOString()
+    });
+
+    window.localStorage.setItem(VEHICLE_LOOKUP_HISTORY_KEY, JSON.stringify(history.slice(0, VEHICLE_LOOKUP_HISTORY_LIMIT)));
+    renderVehicleLookupHistory();
+}
+
+function formatHistoryTimestamp(isoString) {
+    try {
+        const date = new Date(isoString);
+        return date.toLocaleString();
+    } catch {
+        return String(isoString || "");
+    }
+}
+
+function renderVehicleLookupHistory() {
+    const historyElement = document.getElementById("vehicle-history");
+    if (!historyElement) return;
+
+    const historyItems = loadVehicleLookupHistory();
+    historyElement.replaceChildren();
+
+    if (!historyItems.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = tr("history_empty", "No lookup history yet.");
+        historyElement.appendChild(empty);
+        return;
+    }
+
+    historyItems.forEach((item) => {
+        const row = document.createElement("div");
+        row.className = "history-row";
+        row.style.cursor = "pointer";
+        row.innerHTML = `
+            <div>
+                <strong>${item.value}</strong>
+                <p>${item.label}</p>
+                <span>${formatHistoryTimestamp(item.created_at)}</span>
+            </div>
+        `;
+
+        row.addEventListener("click", () => {
+            if (item.type === "vin") {
+                const vinInput = document.getElementById("manual-vin-input");
+                if (vinInput) {
+                    vinInput.value = item.value;
+                    saveManualVin({ preventDefault: () => {} });
+                }
+                return;
+            }
+
+            const plateInput = document.getElementById("plate-input");
+            if (plateInput) {
+                plateInput.value = item.value;
+                savePlateLookup({ preventDefault: () => {} });
+            }
+        });
+
+        historyElement.appendChild(row);
+    });
 }
 
 async function savePort(event) {
@@ -2132,6 +2361,7 @@ async function fetchSupportedSensors() {
             ? tr("standard_obd_note", "Standard OBD only: engine and emission related ECU codes. ABS, airbag and body modules may require a brand-specific scanner.")
             : tr("enhanced_module_active", "Enhanced module support active.")
         );
+        updatePidSupportSummary(result);
         renderSensorSupportList(supportedContainer, result.supported || [], true);
         renderSensorSupportList(unsupportedContainer, result.unsupported || [], false);
     } catch (error) {
@@ -2254,19 +2484,29 @@ function renderScanHistory(scans) {
 }
 
 async function saveScanToDatabase() {
-    const resultElement = document.getElementById("save-scan-result");
+    const resultElement = document.getElementById("save-scan-result") || document.getElementById("report-action-result");
+    await saveScanSnapshotToResult(resultElement, tr("save_scan_label", "Manual dashboard snapshot"));
+}
+
+async function saveReportSnapshot() {
+    const resultElement = document.getElementById("report-action-result");
+    await saveScanSnapshotToResult(resultElement, tr("report_snapshot_label", "Manual report snapshot"));
+}
+
+async function saveScanSnapshotToResult(resultElement, label) {
+    if (!resultElement) return;
     resultElement.innerText = tr("save_scan_saving", "Saving current scan to database...");
 
     try {
         const response = await fetch("/api/scans/save", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ label: tr("save_scan_label", "Manual dashboard snapshot") })
+            body: JSON.stringify({ label })
         });
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.message || `Server returned status ${response.status}`);
 
-        resultElement.innerText = `${result.scan.label} saved at ${result.scan.created_at}.`;
+        resultElement.innerText = tr("scan_saved_at", "{label} saved at {time}.", { label: result.scan.label, time: result.scan.created_at });
         renderScanHistory(result.scans || []);
     } catch (error) {
         console.error(error);
@@ -2305,6 +2545,18 @@ document.getElementById("plate-form").addEventListener("submit", savePlateLookup
 document.getElementById("scan-codes-button").addEventListener("click", scanCodes);
 document.getElementById("refresh-supported-button").addEventListener("click", fetchSupportedSensors);
 document.getElementById("save-scan-button").addEventListener("click", saveScanToDatabase);
+const reportExportButton = byId("report-export-button");
+if (reportExportButton) {
+    reportExportButton.addEventListener("click", exportScanReport);
+}
+const reportSaveSnapshotButton = byId("report-save-snapshot-button");
+if (reportSaveSnapshotButton) {
+    reportSaveSnapshotButton.addEventListener("click", saveReportSnapshot);
+}
+const simpleModeButton = byId("simple-mode-button");
+if (simpleModeButton) {
+    simpleModeButton.addEventListener("click", toggleSimpleMode);
+}
 const demoModeButton = byId("demo-mode-button");
 if (demoModeButton) {
     demoModeButton.addEventListener("click", toggleDemoMode);
@@ -2330,11 +2582,13 @@ initDashboardLauncher();
 initPageFromHash();
 updateFreezeUi();
 requestAnimationFrame(renderGauges);
+scheduleGaugePoll();
 armStartupFallback();
 loadConfig();
 schedulePortPoll();
 fetchSupportedSensors();
 fetchScanHistory();
+renderVehicleLookupHistory();
 fetchData();
 window.addEventListener("load", () => {
     positionGaugeTicks();

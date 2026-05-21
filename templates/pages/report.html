@@ -6,8 +6,35 @@
                     <p class="eyebrow">{{ i18n.report.eyebrow }}</p>
                     <h2 id="report-headline">{{ i18n.report.title }}</h2>
                 </div>
+                <div class="status-pill-row">
+                    <button id="report-export-button" class="secondary-action inline-action" type="button">{{ i18n.report.export }}</button>
+                    <button id="report-save-snapshot-button" class="secondary-action inline-action" type="button">{{ i18n.report.snapshot }}</button>
+                    <button id="simple-mode-button" class="primary-toggle inline-action" type="button" aria-pressed="false">{{ i18n.report.simple_mode }}</button>
+                </div>
             </div>
+            <p id="report-action-result" class="panel-note">{{ i18n.report.action_result }}</p>
             <div id="report-summary" class="history-list"></div>
+        </article>
+
+        <article id="simple-summary-panel" class="panel simple-summary-panel" hidden>
+            <div class="panel-heading">
+                <div>
+                    <p class="eyebrow">{{ i18n.report.simple_eyebrow }}</p>
+                    <h2 id="simple-summary-headline">{{ i18n.report.simple_title }}</h2>
+                </div>
+            </div>
+            <div id="simple-summary-list" class="history-list"></div>
+        </article>
+
+        <article class="panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="eyebrow">{{ i18n.report.battery_eyebrow }}</p>
+                    <h2 id="battery-headline">{{ i18n.report.battery_title }}</h2>
+                </div>
+                <div id="battery-status-badge" class="health-status-badge status-info">{{ i18n.common.unknown }}</div>
+            </div>
+            <p id="battery-detail" class="standard-obd-note">{{ i18n.report.battery_empty }}</p>
         </article>
 
         <article class="panel">
@@ -18,6 +45,16 @@
                 </div>
             </div>
             <div id="readiness-grid" class="sensor-support-list"></div>
+        </article>
+
+        <article class="panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="eyebrow">{{ i18n.report.support_eyebrow }}</p>
+                    <h2>{{ i18n.report.support_title }}</h2>
+                </div>
+            </div>
+            <div id="pid-support-summary" class="snapshot-grid"></div>
         </article>
     </div>
 

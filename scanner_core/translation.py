@@ -196,6 +196,22 @@ SERVER_TEXT_NL = {
     "Oxygen Sensor": "Zuurstofsensor",
     "Closed loop": "Gesloten regelkring",
     "Closed loop / trim compensating": "Gesloten regelkring / trim compenseert",
+    "Battery check unavailable": "Accucheck niet beschikbaar",
+    "ECU or adapter voltage is not available yet.": "ECU- of adapterspanning is nog niet beschikbaar.",
+    "Charging voltage looks low": "Laadspanning lijkt laag",
+    "Charging voltage looks high": "Laadspanning lijkt hoog",
+    "Charging voltage looks normal": "Laadspanning lijkt normaal",
+    "Battery voltage looks low": "Accuspanning lijkt laag",
+    "Battery voltage is a little low": "Accuspanning is wat laag",
+    "Battery voltage looks usable": "Accuspanning lijkt bruikbaar",
+    "No obvious red flags right now.": "Geen duidelijke rode vlaggen op dit moment.",
+    "Connect the scanner for a real result.": "Verbind de scanner voor een echt resultaat.",
+    "No live ECU connection is active yet.": "Er is nog geen live ECU-verbinding actief.",
+    "Fault codes need attention.": "Foutcodes hebben aandacht nodig.",
+    "Battery or charging system needs checking.": "Accu of laadsysteem moet gecontroleerd worden.",
+    "No stored fault codes, critical voltage warning or readiness warning is visible in the current snapshot.": "Geen opgeslagen foutcodes, kritieke spanningswaarschuwing of readiness-waarschuwing zichtbaar in de huidige snapshot.",
+    "Ready": "Klaar",
+    "Incomplete": "Incompleet",
 }
 
 SERVER_PREFIX_NL = {
@@ -219,6 +235,8 @@ SERVER_PREFIX_NL = {
     "Scan completed. ": "Scan voltooid. ",
     "No adapter found on ": "Geen adapter gevonden op ",
     "Voltage looks low at about ": "Spanning lijkt laag rond ",
+    "Voltage is about ": "Spanning is ongeveer ",
+    "Codes found: ": "Codes gevonden: ",
     "Long fuel trim is around ": "Long fuel trim is ongeveer ",
     "Coolant is around ": "Koelvloeistof is ongeveer ",
 }
@@ -235,7 +253,7 @@ BASE_TRANSLATIONS = {
     },
     "meta": {
         "html_lang": "en",
-        "title": "OBD Scanner Pro",
+        "title": "OBD Scanner v0.2.0",
     },
     "partials": {
         "confirm": {
@@ -247,7 +265,7 @@ BASE_TRANSLATIONS = {
         },
         "sidebar": {
             "brand_eyebrow": "Diagnostic Tablet",
-            "brand_name": "OBD Scanner Pro",
+            "brand_name": "OBD Scanner v0.2.0",
             "nav_home": "Dashboard",
             "nav_home_small": "Back to tablet home",
             "connection_eyebrow": "Connection Status",
@@ -262,7 +280,7 @@ BASE_TRANSLATIONS = {
         },
         "startup": {
             "eyebrow": "Boot Sequence",
-            "title": "OBD Scanner Pro",
+            "title": "OBD Scanner v0.2.0",
             "message": "Initializing diagnostic tablet...",
         },
         "topbar": {
@@ -387,8 +405,19 @@ BASE_TRANSLATIONS = {
     "report": {
         "eyebrow": "Vehicle Report",
         "title": "Pre-purchase summary",
+        "export": "Export HTML",
+        "snapshot": "Save Snapshot",
+        "simple_mode": "Simple Mode",
+        "action_result": "No report action yet.",
+        "simple_eyebrow": "Beginner View",
+        "simple_title": "Simple summary",
+        "battery_eyebrow": "Battery / Charging",
+        "battery_title": "Voltage check",
+        "battery_empty": "Voltage data is not available yet.",
         "readiness_eyebrow": "Readiness",
         "readiness_title": "Emission monitors",
+        "support_eyebrow": "OBD Support",
+        "support_title": "PID coverage",
         "details_eyebrow": "Report Details",
         "details_title": "Sections",
     },
@@ -435,6 +464,7 @@ BASE_TRANSLATIONS = {
         "protocol": "Protocol",
         "port": "Port",
         "mode": "Mode",
+        "version": "Version",
         "log_eyebrow": "System Log",
         "log_title": "Readable Errors",
         "no_errors": "No errors logged.",
@@ -488,6 +518,12 @@ BASE_TRANSLATIONS = {
         "vehicle_type": "Vehicle type",
         "color": "Color",
         "apk_expiry": "APK expiry",
+        "history_eyebrow": "Lookup History",
+        "history_title": "VIN / License Plate History",
+        "history_note": "Recent manual VIN and plate lookups are stored locally.",
+        "history_empty": "No lookup history yet.",
+        "history_type_vin": "VIN",
+        "history_type_plate": "Plate",
         "first_registration": "First registration",
         "build_year": "Build year",
         "engine_size": "Engine size",
@@ -683,8 +719,19 @@ BASE_TRANSLATIONS = {
         "no_scans_saved": "No scans saved yet.",
         "save_scan_saving": "Saving current scan to database...",
         "save_scan_failed": "Could not save the scan.",
+        "scan_saved_at": "{label} saved at {time}.",
+        "report_snapshot_label": "Manual report snapshot",
         "report_summary_empty": "No report summary available yet.",
         "report_details_empty": "No report details available yet.",
+        "battery_unavailable": "Battery check unavailable",
+        "battery_empty": "Voltage data is not available yet.",
+        "simple_mode_show": "Show Simple Mode",
+        "simple_mode_hide": "Hide Simple Mode",
+        "simple_summary_unavailable": "Simple summary unavailable.",
+        "simple_summary": "Simple summary",
+        "pid_supported": "Supported",
+        "pid_unsupported": "Unsupported",
+        "pid_total": "Total checked",
         "freeze_frame_empty": "No freeze-frame snapshot available.",
         "readiness_empty": "No readiness data available yet.",
         "readiness_on": "On",
@@ -817,7 +864,7 @@ TRANSLATIONS = {
                 "yes": "Ja",
             },
             "sidebar": {
-                "brand_eyebrow": "Diagnose Tablet",
+                "brand_eyebrow": "Diagnose Tablet v0.2.0",
                 "nav_home_small": "Terug naar het tablet-overzicht",
                 "connection_eyebrow": "Verbindingsstatus",
                 "status_text": "Verbinden...",
@@ -912,8 +959,19 @@ TRANSLATIONS = {
         "report": {
             "eyebrow": "Voertuigrapport",
             "title": "Aankoopoverzicht",
+            "export": "Exporteer HTML",
+            "snapshot": "Snapshot Opslaan",
+            "simple_mode": "Simple Mode",
+            "action_result": "Nog geen rapportactie uitgevoerd.",
+            "simple_eyebrow": "Beginnerweergave",
+            "simple_title": "Simpele samenvatting",
+            "battery_eyebrow": "Accu / Laden",
+            "battery_title": "Spanningscheck",
+            "battery_empty": "Spanningsdata is nog niet beschikbaar.",
             "readiness_eyebrow": "Readiness",
             "readiness_title": "Emissiemonitors",
+            "support_eyebrow": "OBD Support",
+            "support_title": "PID-dekking",
             "details_eyebrow": "Rapportdetails",
             "details_title": "Secties",
         },
@@ -960,6 +1018,7 @@ TRANSLATIONS = {
             "protocol": "Protocol",
             "port": "Poort",
             "mode": "Modus",
+            "version": "Versie",
             "log_eyebrow": "Systeemlog",
             "log_title": "Leesbare Fouten",
             "no_errors": "Geen fouten gelogd.",
@@ -1015,6 +1074,12 @@ TRANSLATIONS = {
             "apk_expiry": "APK vervalt",
             "first_registration": "Eerste toelating",
             "build_year": "Bouwjaar",
+            "history_eyebrow": "Zoekgeschiedenis",
+            "history_title": "VIN / Kenteken Geschiedenis",
+            "history_note": "Recente handmatige VIN- en kentekenzoekopdrachten worden lokaal opgeslagen.",
+            "history_empty": "Nog geen geschiedenis.",
+            "history_type_vin": "VIN",
+            "history_type_plate": "Kenteken",
             "engine_size": "Cilinderinhoud",
             "curb_weight": "Leeggewicht",
             "status": "Status",
@@ -1128,8 +1193,19 @@ TRANSLATIONS = {
             "no_scans_saved": "Nog geen scans opgeslagen.",
             "save_scan_saving": "Huidige scan opslaan in database...",
             "save_scan_failed": "Scan kon niet worden opgeslagen.",
+            "scan_saved_at": "{label} opgeslagen om {time}.",
+            "report_snapshot_label": "Handmatige rapportsnapshot",
             "report_summary_empty": "Nog geen rapportsamenvatting beschikbaar.",
             "report_details_empty": "Nog geen rapportdetails beschikbaar.",
+            "battery_unavailable": "Accucheck niet beschikbaar",
+            "battery_empty": "Spanningsdata is nog niet beschikbaar.",
+            "simple_mode_show": "Simple Mode tonen",
+            "simple_mode_hide": "Simple Mode verbergen",
+            "simple_summary_unavailable": "Simpele samenvatting niet beschikbaar.",
+            "simple_summary": "Simpele samenvatting",
+            "pid_supported": "Ondersteund",
+            "pid_unsupported": "Niet ondersteund",
+            "pid_total": "Totaal gecheckt",
             "freeze_frame_empty": "Geen freeze-frame snapshot beschikbaar.",
             "readiness_empty": "Nog geen readiness-data beschikbaar.",
             "readiness_on": "Aan",
@@ -1297,6 +1373,25 @@ def localize_text(value, lang: str | None):
     if value.startswith("Voltage looks low at about ") and value.endswith(" V. Battery or charging system may need attention."):
         amount = value[len("Voltage looks low at about "):-len(" V. Battery or charging system may need attention.")]
         return f"Spanning lijkt laag rond {amount} V. Accu of laadsysteem heeft mogelijk aandacht nodig."
+    if value.startswith("Voltage is about ") and value.endswith(" V while the engine appears to be running. Check alternator, battery and grounds."):
+        amount = value[len("Voltage is about "):-len(" V while the engine appears to be running. Check alternator, battery and grounds.")]
+        return f"Spanning is ongeveer {amount} V terwijl de motor lijkt te draaien. Controleer dynamo, accu en massa."
+    if value.startswith("Voltage is about ") and value.endswith(" V. Check alternator regulator and battery condition."):
+        amount = value[len("Voltage is about "):-len(" V. Check alternator regulator and battery condition.")]
+        return f"Spanning is ongeveer {amount} V. Controleer dynamoregelaar en accustaat."
+    if value.startswith("Voltage is about ") and value.endswith(" V with the engine running."):
+        amount = value[len("Voltage is about "):-len(" V with the engine running.")]
+        return f"Spanning is ongeveer {amount} V met draaiende motor."
+    if value.startswith("Voltage is about ") and value.endswith(" V. Charge or test the battery before deeper diagnostics."):
+        amount = value[len("Voltage is about "):-len(" V. Charge or test the battery before deeper diagnostics.")]
+        return f"Spanning is ongeveer {amount} V. Laad of test de accu voordat je verder diagnose stelt."
+    if value.startswith("Voltage is about ") and value.endswith(" V with no clear running RPM signal."):
+        amount = value[len("Voltage is about "):-len(" V with no clear running RPM signal.")]
+        return f"Spanning is ongeveer {amount} V zonder duidelijk draaiend RPM-signaal."
+    if value.startswith("Codes found: "):
+        return "Codes gevonden: " + value[len("Codes found: "):]
+    if value.startswith("Readiness incomplete: ") and value.endswith("."):
+        return "Readiness incompleet: " + value[len("Readiness incomplete: "):]
     if value.startswith("Long fuel trim is around ") and value.endswith(". Could hint at air/fuel imbalance."):
         amount = value[len("Long fuel trim is around "):-len(". Could hint at air/fuel imbalance.")]
         return f"Long fuel trim is ongeveer {amount}. Dit kan wijzen op een lucht/brandstof-onbalans."

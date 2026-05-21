@@ -3,11 +3,22 @@ import time
 import traceback
 import json
 import re
+from html import escape
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from config import (
+    FAST_SENSOR_INTERVAL,
+    MAX_POLL_INTERVAL,
+    MEDIUM_SENSOR_INTERVAL,
+    POLL_INTERVAL,
+    RPM_POLL_INTERVAL,
+    SCAN_HISTORY_LIMIT,
+    SLOW_SENSOR_INTERVAL,
+    STALE_AFTER_SECONDS,
+)
 from scanner_core.demo_services import (
     build_demo_dtc_snapshot,
     build_demo_freeze_frame,
@@ -19,7 +30,7 @@ from scanner_core.demo_services import (
     build_demo_vehicle_profile,
     build_demo_vehicle_snapshot,
 )
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from scanner_core.cache_services import load_vin_cache, save_vin_cache
@@ -54,6 +65,7 @@ except Exception as e:
     OBD_IMPORT_ERROR = e
 
 app = Flask(__name__)
+APP_VERSION = "v0.2.0"
 
 
 def current_language():
@@ -68,6 +80,9 @@ def localized_jsonify(payload, status_code=200):
 def inject_translations():
     lang = current_language()
     translations = get_translations(lang)
+    translations["meta"]["title"] = f"OBD Scanner {APP_VERSION}"
+    translations["partials"]["startup"]["title"] = f"OBD Scanner {APP_VERSION}"
+    translations["partials"]["sidebar"]["brand_name"] = f"OBD Scanner {APP_VERSION}"
 
     return {
         "lang": lang,
@@ -75,6 +90,7 @@ def inject_translations():
         "i18n": translations,
         "tr": lambda key, **kwargs: translate(lang, key, **kwargs),
         "js_translations": translations.get("js", {}),
+        "app_version": APP_VERSION,
     }
 
 
@@ -90,11 +106,6 @@ def localize_json_response(response):
     return response
 
 DB_PATH = db_path_from_file(__file__)
-POLL_INTERVAL = 0.2
-RPM_POLL_INTERVAL = 0.2
-MAX_POLL_INTERVAL = 0.8
-STALE_AFTER_SECONDS = 0.9
-SCAN_HISTORY_LIMIT = 20
 
 connection = None
 vehicle_data = {}
@@ -170,6 +181,7 @@ demo_drive_state = {
     "preset": "idle",
 }
 error_log_state = {}
+last_live_command_poll = {}
 
 
 def is_known_port_config_error(error):
@@ -328,7 +340,7 @@ def set_vehicle_value(key, label, value):
         vehicle_data[key] = build_live_item(previous, label, value, measured_at)
 
 
-def build_live_item(previous, label, value, measured_at=None):
+def build_live_item(previous, label, value, measured_at=None, stale_after=STALE_AFTER_SECONDS):
     measured_at = measured_at or time.time()
     previous = previous or {}
     is_fresh = value not in {None, "", "N/A"}
@@ -341,7 +353,7 @@ def build_live_item(previous, label, value, measured_at=None):
         display_value = previous.get("value", "N/A")
 
     age_seconds = None if updated_epoch is None else max(0.0, measured_at - updated_epoch)
-    stale = bool(updated_epoch and age_seconds is not None and age_seconds >= STALE_AFTER_SECONDS)
+    stale = bool(updated_epoch and age_seconds is not None and age_seconds >= stale_after)
 
     return {
         "label": label,
@@ -520,7 +532,40 @@ LIMITED_MODE_COMMAND_KEYS = {
     "long_fuel_trim_1",
     "control_voltage",
 }
+QUICK_LOOP_COMMAND_KEYS = {
+    "speed",
+}
+FAST_SENSOR_COMMAND_KEYS = {
+    "coolant_temp",
+    "engine_load",
+    "throttle",
+    "intake_pressure",
+    "short_fuel_trim_1",
+    "long_fuel_trim_1",
+    "maf",
+    "control_voltage",
+}
+MEDIUM_SENSOR_COMMAND_KEYS = {
+    "fuel_status",
+    "oil_temp",
+    "intake_temp",
+    "fuel_pressure",
+    "barometric_pressure",
+    "timing_advance",
+    "voltage",
+}
+SLOW_SENSOR_COMMAND_KEYS = {
+    "status",
+    "ambient_temp",
+    "fuel_level",
+    "runtime",
+    "distance_mil",
+    "warmups_since_clear",
+    "distance_since_clear",
+    "time_since_clear",
+}
 RPM_COMMAND = get_command("RPM")
+SPEED_COMMAND = get_command("SPEED")
 
 
 def get_active_live_commands():
@@ -531,6 +576,34 @@ def get_active_live_commands():
             if key in LIMITED_MODE_COMMAND_KEYS
         }
     return LIVE_COMMANDS
+
+
+def get_live_command_interval(key):
+    if key in QUICK_LOOP_COMMAND_KEYS:
+        return None
+    if key in FAST_SENSOR_COMMAND_KEYS:
+        return FAST_SENSOR_INTERVAL
+    if key in MEDIUM_SENSOR_COMMAND_KEYS:
+        return MEDIUM_SENSOR_INTERVAL
+    if key in SLOW_SENSOR_COMMAND_KEYS:
+        return SLOW_SENSOR_INTERVAL
+    return MEDIUM_SENSOR_INTERVAL
+
+
+def get_live_command_stale_after(key):
+    interval = get_live_command_interval(key)
+    if interval is None:
+        return STALE_AFTER_SECONDS
+    return max(STALE_AFTER_SECONDS, interval * 2.5)
+
+
+def should_poll_live_command(key, now):
+    interval = get_live_command_interval(key)
+    if interval is None:
+        return False
+
+    last_polled = last_live_command_poll.get(key)
+    return last_polled is None or (now - last_polled) >= interval
 
 VIN_PATTERN = re.compile(r"[A-HJ-NPR-Z0-9]{17}")
 RDW_DATASET_URL = "https://opendata.rdw.nl/resource/m9d7-ebf2.json"
@@ -767,6 +840,144 @@ def build_health_report():
     }
 
 
+def build_battery_check():
+    with state_lock:
+        vehicle = dict(vehicle_data)
+        status = dict(obd_status)
+
+    ecu_voltage = number_from_value(vehicle.get("control_voltage", {}).get("value"))
+    adapter_voltage = number_from_value(vehicle.get("voltage", {}).get("value"))
+    rpm = number_from_value(vehicle.get("rpm", {}).get("value"))
+    voltage = ecu_voltage if ecu_voltage is not None else adapter_voltage
+
+    result = {
+        "available": voltage is not None,
+        "status": "unknown",
+        "headline": "Battery check unavailable",
+        "detail": "ECU or adapter voltage is not available yet.",
+        "voltage": voltage,
+        "ecu_voltage": ecu_voltage,
+        "adapter_voltage": adapter_voltage,
+        "running": bool(rpm is not None and rpm > 450),
+    }
+
+    if voltage is None:
+        return result
+
+    if result["running"]:
+        if voltage < 13.2:
+            result.update({
+                "status": "warning",
+                "headline": "Charging voltage looks low",
+                "detail": f"Voltage is about {voltage:.1f} V while the engine appears to be running. Check alternator, battery and grounds.",
+            })
+        elif voltage > 15.0:
+            result.update({
+                "status": "warning",
+                "headline": "Charging voltage looks high",
+                "detail": f"Voltage is about {voltage:.1f} V. Check alternator regulator and battery condition.",
+            })
+        else:
+            result.update({
+                "status": "good",
+                "headline": "Charging voltage looks normal",
+                "detail": f"Voltage is about {voltage:.1f} V with the engine running.",
+            })
+    else:
+        if voltage < 11.8:
+            result.update({
+                "status": "warning",
+                "headline": "Battery voltage looks low",
+                "detail": f"Voltage is about {voltage:.1f} V. Charge or test the battery before deeper diagnostics.",
+            })
+        elif voltage < 12.2:
+            result.update({
+                "status": "info",
+                "headline": "Battery voltage is a little low",
+                "detail": f"Voltage is about {voltage:.1f} V with no clear running RPM signal.",
+            })
+        else:
+            result.update({
+                "status": "good",
+                "headline": "Battery voltage looks usable",
+                "detail": f"Voltage is about {voltage:.1f} V with no clear running RPM signal.",
+            })
+
+    if status.get("demo_mode"):
+        result["detail"] += " Demo mode values are simulated."
+
+    return result
+
+
+def build_simple_summary(payload):
+    health = payload.get("health", {})
+    battery = payload.get("battery_check", {})
+    dtc = payload.get("dtc", {})
+    readiness = payload.get("readiness", {})
+    status = payload.get("status", {})
+
+    stored = len(dtc.get("stored", []))
+    pending = len(dtc.get("pending", []))
+    permanent = len(dtc.get("permanent", []))
+    incomplete = [
+        item.get("name", "")
+        for item in readiness.get("monitors", [])
+        if item.get("available") and not item.get("complete")
+    ]
+
+    items = []
+    level = "good"
+    headline = "No obvious red flags right now."
+
+    if not status.get("connected"):
+        level = "warning"
+        headline = "Connect the scanner for a real result."
+        items.append("No live ECU connection is active yet.")
+
+    if stored or pending or permanent:
+        level = "danger" if stored else "warning"
+        headline = "Fault codes need attention."
+        items.append(f"Codes found: stored {stored}, pending {pending}, permanent {permanent}.")
+
+    if battery.get("status") in {"warning", "danger"}:
+        level = "warning" if level == "good" else level
+        items.append(battery.get("headline", "Battery or charging system needs checking."))
+
+    if incomplete:
+        level = "warning" if level == "good" else level
+        items.append(f"Readiness incomplete: {', '.join(incomplete[:4])}.")
+
+    if health.get("status") == "danger":
+        level = "danger"
+        headline = health.get("headline", headline)
+    elif health.get("status") == "warning" and level == "good":
+        level = "warning"
+        headline = health.get("headline", "A few things need checking.")
+
+    if not items:
+        items.append("No stored fault codes, critical voltage warning or readiness warning is visible in the current snapshot.")
+
+    return {
+        "enabled_by_default": False,
+        "level": level,
+        "headline": headline,
+        "items": items,
+    }
+
+
+def build_pid_support_summary():
+    sensors = get_supported_sensor_matrix()
+    supported = [item for item in sensors if item["supported"]]
+    unsupported = [item for item in sensors if not item["supported"]]
+    return {
+        "total": len(sensors),
+        "supported_count": len(supported),
+        "unsupported_count": len(unsupported),
+        "supported": supported,
+        "unsupported": unsupported,
+    }
+
+
 def current_scan_payload():
     with state_lock:
         status = dict(obd_status)
@@ -812,6 +1023,7 @@ def current_scan_payload():
     preset_id, preset_meta = get_demo_preset(demo_preset)
 
     payload = {
+        "app_version": APP_VERSION,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "status": status,
         "session_state": {
@@ -827,6 +1039,8 @@ def current_scan_payload():
         "readiness": readiness,
         "freeze_frame": freeze_frame,
         "health": build_health_report(),
+        "battery_check": build_battery_check(),
+        "pid_support": build_pid_support_summary(),
         "standard_obd_only": True,
         "demo": {
             "enabled": bool(status.get("demo_mode")),
@@ -835,6 +1049,7 @@ def current_scan_payload():
         },
     }
     payload["report"] = build_purchase_report(payload)
+    payload["simple_summary"] = build_simple_summary(payload)
     return payload
 
 
@@ -852,17 +1067,111 @@ def save_scan_snapshot(label):
     return storage_save_scan_snapshot(DB_PATH, created_at, label, summary, payload)
 
 
+def render_export_html(payload):
+    status = payload.get("status", {})
+    vehicle = payload.get("vehicle", {})
+    dtc = payload.get("dtc", {})
+    health = payload.get("health", {})
+    battery = payload.get("battery_check", {})
+    readiness = payload.get("readiness", {})
+    report = payload.get("report", {})
+
+    def row(label, value):
+        safe_value = value if value not in (None, "") else "--"
+        return f"<tr><th>{escape(str(label))}</th><td>{escape(str(safe_value))}</td></tr>"
+
+    def code_rows(title, codes):
+        if not codes:
+            return f"<h2>{escape(title)}</h2><p>No codes.</p>"
+        rows = []
+        for item in codes:
+            causes = ", ".join(item.get("possible_causes") or [])
+            rows.append(
+                "<tr>"
+                f"<td>{escape(item.get('code', '--'))}</td>"
+                f"<td>{escape(item.get('description_en') or item.get('description') or '--')}</td>"
+                f"<td>{escape(item.get('system') or '--')}</td>"
+                f"<td>{escape(item.get('severity') or '--')}</td>"
+                f"<td>{escape(causes or '--')}</td>"
+                "</tr>"
+            )
+        return (
+            f"<h2>{escape(title)}</h2>"
+            "<table><thead><tr><th>Code</th><th>Description</th><th>System</th><th>Severity</th><th>Possible causes</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+        )
+
+    readiness_items = readiness.get("monitors", []) if readiness.get("available") else []
+    readiness_rows = "".join(
+        row(item.get("name", "Monitor"), "Ready" if item.get("complete") else "Incomplete")
+        for item in readiness_items
+    ) or row("Readiness", "No readiness data available")
+
+    report_sections = "".join(
+        f"<h3>{escape(section.get('title', 'Section'))}</h3><ul>"
+        + "".join(f"<li>{escape(str(item))}</li>" for item in section.get("items", []))
+        + "</ul>"
+        for section in report.get("sections", [])
+    )
+
+    return f"""<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>OBD Scan Report {escape(payload.get('created_at', ''))}</title>
+  <style>
+    body {{ font-family: Arial, sans-serif; color: #172033; margin: 32px; }}
+    h1, h2, h3 {{ margin-bottom: 8px; }}
+    table {{ border-collapse: collapse; width: 100%; margin: 12px 0 24px; }}
+    th, td {{ border: 1px solid #d6dee8; padding: 8px 10px; text-align: left; vertical-align: top; }}
+    th {{ background: #f1f5f9; width: 220px; }}
+    .note {{ color: #627286; }}
+  </style>
+</head>
+<body>
+  <h1>OBD Scan Report</h1>
+  <p class="note">Generated by OBD-scanner-Python {escape(APP_VERSION)} at {escape(payload.get('created_at', '--'))}</p>
+  <h2>Overview</h2>
+  <table>
+    {row('Connection', 'Connected' if status.get('connected') else 'Not connected')}
+    {row('Protocol', status.get('protocol', 'Unknown'))}
+    {row('Port', status.get('current_port') or 'auto')}
+    {row('Health score', health.get('score', '--'))}
+    {row('Health verdict', health.get('headline', '--'))}
+    {row('Battery / charging', battery.get('headline', '--'))}
+  </table>
+  <h2>Live Highlights</h2>
+  <table>
+    {row('RPM', vehicle.get('rpm', {}).get('value', '--'))}
+    {row('Speed', vehicle.get('speed', {}).get('value', '--'))}
+    {row('Coolant temp', vehicle.get('coolant_temp', {}).get('value', '--'))}
+    {row('ECU voltage', vehicle.get('control_voltage', {}).get('value', '--'))}
+    {row('Long fuel trim bank 1', vehicle.get('long_fuel_trim_1', {}).get('value', '--'))}
+  </table>
+  {code_rows('Stored Codes', dtc.get('stored', []))}
+  {code_rows('Pending Codes', dtc.get('pending', []))}
+  {code_rows('Permanent Codes', dtc.get('permanent', []))}
+  <h2>Readiness</h2>
+  <table>{readiness_rows}</table>
+  <h2>Report Details</h2>
+  {report_sections or '<p>No report details available.</p>'}
+  <p class="note">Standard OBD-II only. ABS, airbag and body modules may require brand-specific diagnostics.</p>
+</body>
+</html>"""
+
+
 def get_recent_scans(limit=SCAN_HISTORY_LIMIT):
     return storage_get_recent_scans(DB_PATH, limit)
 
 
 def connect_obd():
-    global connection, query_error_streak, current_live_poll_interval
+    global connection, query_error_streak, current_live_poll_interval, last_live_command_poll
 
     with connect_lock:
         try:
             query_error_streak = 0
             current_live_poll_interval = POLL_INTERVAL
+            last_live_command_poll = {}
             demo_mode = get_demo_mode_enabled()
             with state_lock:
                 obd_status["demo_mode"] = demo_mode
@@ -970,6 +1279,37 @@ def set_status(connected, protocol=None, error=None, user_message=None, connecti
             obd_status["last_successful_update"] = obd_status["last_update"]
 
 
+def simplify_obd_value(value):
+    if isinstance(value, (list, tuple, set)):
+        simplified_parts = []
+        seen = set()
+        for item in value:
+            simplified = simplify_obd_value(item)
+            if simplified in {"", "N/A"} or simplified in seen:
+                continue
+            seen.add(simplified)
+            simplified_parts.append(simplified)
+        return " / ".join(simplified_parts) if simplified_parts else "N/A"
+
+    text = str(value or "").strip()
+    lower_text = text.lower()
+
+    if "closed loop" in lower_text:
+        if "using oxygen sensor feedback" in lower_text or lower_text == "closed loop":
+            return "Closed loop"
+        if "trim compensating" in lower_text:
+            return "Closed loop / trim compensating"
+
+    if "open loop" in lower_text:
+        if "engine load" in lower_text:
+            return "Open loop - engine load"
+        if "fuel cut" in lower_text or "deceleration" in lower_text:
+            return "Open loop - fuel cut"
+        return "Open loop"
+
+    return text or "N/A"
+
+
 def safe_query(command):
     if command is None:
         return "N/A"
@@ -988,7 +1328,7 @@ def safe_query(command):
             return "N/A"
 
         apply_poll_guard_success()
-        return str(response.value)
+        return simplify_obd_value(response.value)
 
     except Exception as e:
         apply_poll_guard_error()
@@ -1013,9 +1353,27 @@ def normalize_vin(raw_value):
     if raw_value is None:
         return ""
 
-    compact = re.sub(r"[^A-Za-z0-9]", "", str(raw_value).upper())
-    match = VIN_PATTERN.search(compact)
-    return match.group(0) if match else ""
+    sources = []
+    if isinstance(raw_value, (bytes, bytearray)):
+        sources.append(bytes(raw_value).decode("ascii", errors="ignore"))
+    elif isinstance(raw_value, (list, tuple, set)):
+        sources.extend(str(item) for item in raw_value)
+    else:
+        sources.append(str(raw_value))
+
+    expanded_sources = []
+    for source in sources:
+        expanded_sources.append(source)
+        expanded_sources.extend(re.findall(r"b?['\"]([^'\"]+)['\"]", source))
+
+    for source in expanded_sources:
+        compact = re.sub(r"[^A-Za-z0-9]", "", source.upper())
+        for candidate in VIN_PATTERN.findall(compact):
+            if candidate.startswith(("BYTEARRAY", "OBDRESPONSE")):
+                continue
+            return candidate
+
+    return ""
 
 
 def read_vin():
@@ -1601,7 +1959,7 @@ def update_loop():
                     if not vehicle_profile.get("vin"):
                         vehicle_profile.update(build_demo_vehicle_profile())
 
-                time.sleep(POLL_INTERVAL)
+                time.sleep(RPM_POLL_INTERVAL)
                 continue
 
             if not connection or not connection.is_connected():
@@ -1627,10 +1985,25 @@ def update_loop():
 
             for key, item in get_active_live_commands().items():
                 label, command = item
-                value = safe_query(command)
-                data[key] = {
-                    **build_live_item(previous_data.get(key), label, value, cycle_time),
-                }
+                previous_item = previous_data.get(key)
+                stale_after = get_live_command_stale_after(key)
+
+                if should_poll_live_command(key, cycle_time):
+                    value = safe_query(command)
+                    last_live_command_poll[key] = cycle_time
+                    data[key] = build_live_item(previous_item, label, value, cycle_time, stale_after)
+                else:
+                    data[key] = (
+                        {
+                            **previous_item,
+                            "stale": bool(
+                                previous_item.get("updated_epoch")
+                                and (cycle_time - previous_item.get("updated_epoch")) >= stale_after
+                            ),
+                        }
+                        if previous_item
+                        else build_live_item(None, label, "N/A", cycle_time)
+                    )
 
             protocol = get_protocol_name()
             now = time.time()
@@ -1646,7 +2019,12 @@ def update_loop():
                     "label": "RPM",
                     "value": "N/A"
                 })))
+                current_speed = dict(vehicle_data.get("speed", previous_data.get("speed", {
+                    "label": "Speed",
+                    "value": "N/A"
+                })))
                 data["rpm"] = current_rpm
+                data["speed"] = current_speed
                 vehicle_data = data
                 obd_status["connected"] = True
                 obd_status["protocol"] = protocol
@@ -1687,7 +2065,9 @@ def rpm_update_loop():
                 continue
 
             rpm_value = safe_query(RPM_COMMAND)
+            speed_value = safe_query(SPEED_COMMAND)
             set_vehicle_value("rpm", "RPM", rpm_value)
+            set_vehicle_value("speed", "Speed", speed_value)
 
             with state_lock:
                 vin = vehicle_profile.get("vin", "")
@@ -1702,7 +2082,7 @@ def rpm_update_loop():
                 vin_autoload_attempted = True
                 threading.Thread(target=auto_refresh_vin_if_needed, daemon=True).start()
 
-            time.sleep(current_live_poll_interval)
+            time.sleep(min(RPM_POLL_INTERVAL, current_live_poll_interval))
         except Exception as e:
             log_error("RPM update loop", e)
             time.sleep(0.25)
@@ -1746,6 +2126,7 @@ def api_status():
                 connection_quality["phase"] = "USB Adapter Detected"
     return jsonify({
         **status,
+        "connection_quality": connection_quality,
         "session_state": build_scanner_session_state(
             status,
             connection_quality,
@@ -1771,7 +2152,13 @@ def api_connection_test():
     with state_lock:
         current_status = dict(obd_status)
 
-    if connection and current_status.get("connected"):
+    current_connection_live = False
+    try:
+        current_connection_live = bool(connection and connection.is_connected())
+    except Exception:
+        current_connection_live = False
+
+    if current_connection_live or current_status.get("connected"):
         protocol = current_status.get("protocol") or "Unknown"
         port = current_status.get("current_port") or "auto-detect"
         return jsonify({
@@ -1785,6 +2172,25 @@ def api_connection_test():
             ]
         })
 
+    if connection is not None:
+        quality = build_connection_quality_snapshot(
+            connection,
+            current_status.get("connecting"),
+            current_status.get("error"),
+        )
+        phase = quality.get("phase") or "Unknown"
+        protocol = current_status.get("protocol") or "Unknown"
+        return jsonify({
+            "success": bool(quality.get("car_connected")),
+            "phase": phase,
+            "protocol": protocol,
+            "steps": [
+                {"name": "USB adapter detected", "ok": bool(quality.get("adapter_connected")), "detail": current_status.get("current_port") or phase},
+                {"name": "OBD protocol detected", "ok": bool(quality.get("port_powered")), "detail": protocol if quality.get("port_powered") else phase},
+                {"name": "ECU responding", "ok": bool(quality.get("car_connected")), "detail": "Live ECU response" if quality.get("car_connected") else "No ECU response"},
+            ]
+        }), (200 if quality.get("adapter_connected") else 400)
+
     result = run_connection_test(obd, get_configured_port())
     return jsonify(result), (200 if result.get("success") else 400)
 
@@ -1797,10 +2203,40 @@ def api_data():
     return jsonify(payload)
 
 
+@app.route("/api/gauges")
+def api_gauges():
+    with state_lock:
+        return jsonify({
+            "connected": bool(obd_status.get("connected")),
+            "demo_mode": bool(obd_status.get("demo_mode")),
+            "rpm": dict(vehicle_data.get("rpm", {
+                "label": "RPM",
+                "value": "N/A",
+                "updated_at": "--",
+            })),
+            "speed": dict(vehicle_data.get("speed", {
+                "label": "Speed",
+                "value": "N/A",
+                "updated_at": "--",
+            })),
+        })
+
+
 @app.route("/api/report")
 def api_report():
     payload = current_scan_payload()
     return jsonify(payload.get("report", {}))
+
+
+@app.route("/api/report/export")
+def api_report_export():
+    payload = current_scan_payload()
+    filename = f"obd-scan-report-{time.strftime('%Y%m%d-%H%M%S')}.html"
+    return Response(
+        render_export_html(payload),
+        mimetype="text/html",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.route("/api/codes/scan", methods=["POST"])
@@ -1896,6 +2332,7 @@ def set_safe_mode():
 @app.route("/api/config")
 def api_config():
     return jsonify({
+        "app_version": APP_VERSION,
         "obd_port": get_configured_port() or "",
         "detected_ports": list_serial_ports(),
         "demo_mode": get_demo_mode_enabled(),
@@ -2006,10 +2443,9 @@ def set_obd_port():
 @app.route("/api/supported")
 def supported_commands():
     try:
-        sensors = get_supported_sensor_matrix()
+        support = build_pid_support_summary()
         return jsonify({
-            "supported": [item for item in sensors if item["supported"]],
-            "unsupported": [item for item in sensors if not item["supported"]],
+            **support,
             "standard_obd_only": True,
         })
     except Exception as e:
@@ -2250,4 +2686,4 @@ if __name__ == "__main__":
     connect_obd()
     threading.Thread(target=update_loop, daemon=True).start()
     threading.Thread(target=rpm_update_loop, daemon=True).start()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=True)

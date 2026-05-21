@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ i18n.meta.title }}</title>
-    <link rel="stylesheet" href="/static/style.css?v=live-layout-1">
+    <title>OBD Scanner {{ app_version }}</title>
+    <link rel="stylesheet" href="/static/style.css?v={{ app_version }}">
 </head>
 <body>
 {% include "partials/startup_overlay.html" %}
@@ -37,6 +37,6 @@
 window.APP_LANG = {{ lang | tojson }};
 window.APP_I18N = {{ js_translations | tojson }};
 </script>
-<script src="/static/{{ 'nl_app.js' if lang == 'nl' else 'en_app.js' }}?v=live-layout-1"></script>
+<script src="/static/{{ 'nl_app.js' if lang == 'nl' else 'en_app.js' }}?v={{ app_version }}"></script>
 </body>
 </html>

@@ -156,6 +156,19 @@ def list_serial_ports():
 
 
 def run_connection_test(obd_module, configured_port):
+    detected_ports = list_serial_ports()
+    selected_port = str(configured_port or "").strip().upper()
+    selected_port_present = bool(
+        selected_port
+        and any(str(item.get("device") or "").strip().upper() == selected_port for item in detected_ports)
+    )
+    any_adapter_present = selected_port_present or bool(detected_ports)
+    adapter_detail = (
+        configured_port
+        if selected_port_present
+        else ", ".join(item.get("device", "") for item in detected_ports[:4]) or "No serial ports detected"
+    )
+
     if obd_module is None:
         return {
             "success": False,
@@ -192,9 +205,9 @@ def run_connection_test(obd_module, configured_port):
             "success": False,
             "phase": "Connection test failed",
             "steps": [
-                {"name": "USB adapter detected", "ok": False, "detail": str(exc)},
+                {"name": "USB adapter detected", "ok": any_adapter_present, "detail": adapter_detail if any_adapter_present else str(exc)},
                 {"name": "OBD protocol detected", "ok": False, "detail": "Not available"},
-                {"name": "ECU responding", "ok": False, "detail": "Not available"},
+                {"name": "ECU responding", "ok": False, "detail": str(exc)},
             ],
         }
     finally:
