@@ -5,7 +5,7 @@ more often. Keep non-critical values slower to avoid noisy adapters and ECU load
 """
 
 # App version shown in the dashboard, sidebar and exports.
-APP_VERSION = "v0.3.0"
+APP_VERSION = "v0.3.1"
 
 # Main live-data loop cadence.
 POLL_INTERVAL = 0.1

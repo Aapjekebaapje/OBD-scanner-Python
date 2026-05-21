@@ -172,3 +172,14 @@ def get_recent_garage_notes(db_path, limit):
         )
 
     return notes
+
+
+def delete_garage_note(db_path, note_id):
+    with sqlite3.connect(db_path) as db:
+        cursor = db.execute(
+            "DELETE FROM garage_notes WHERE id = ?",
+            (note_id,),
+        )
+        db.commit()
+
+    return cursor.rowcount > 0

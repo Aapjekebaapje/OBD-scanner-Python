@@ -4,7 +4,7 @@ A Python and Flask based OBD-II diagnostic dashboard for reading live ECU data, 
 
 The project includes a tablet-style web interface, English and Dutch language support, local scan history, VIN/license plate workflows and a built-in demo mode for testing without a car connected.
 
-Current version: `v0.3.0`
+Current version: `v0.3.1`
 
 ## Features
 
@@ -24,7 +24,9 @@ Current version: `v0.3.0`
 - Local VIN/license plate lookup history
 - Local scan history stored in SQLite
 - Garage notes saved per VIN and license plate
-- Garage note filtering and styled HTML export
+- Garage note live search across VIN, license plate, title, mileage, note text and date
+- Garage note styled HTML export
+- Garage note delete action with confirmation popup
 - USB / COM port selection
 - Connection test and adapter status view
 - Connection quality view for USB adapter, OBD port, ECU and live data state
@@ -193,7 +195,11 @@ Garage notes are stored locally in SQLite and are linked to a vehicle identity. 
 - VIN
 - License plate
 
-The app can auto-fill these fields when vehicle data is detected, but they can also be entered manually. Garage notes can be filtered by VIN and license plate, and the filtered notes can be exported as a styled HTML report.
+The app can auto-fill these fields when vehicle data is detected, but they can also be entered manually.
+
+Saved garage notes use a clean card layout with compact metadata chips for date/time, VIN, license plate and mileage. The garage database has one live search bar that filters while typing across VIN, license plate, title, mileage, note text and date/time.
+
+Filtered garage notes can be exported as a styled HTML report. Notes can also be deleted from the local database with a trash button and confirmation popup.
 
 ## Configuration
 
@@ -266,7 +272,7 @@ The app stores local configuration and scan history in:
 scanner_config.db
 ```
 
-This file is created and updated locally when you use the app. It stores settings, scan history and garage notes. Browser-side UI state and VIN/license plate lookup history are stored in `localStorage`.
+This file is created and updated locally when you use the app. It stores settings, scan history and garage notes. Deleted garage notes are removed from this local database. Browser-side UI state and VIN/license plate lookup history are stored in `localStorage`.
 
 Use the Reset UI Cache button on the System page if the browser keeps old dashboard state after an update.
 

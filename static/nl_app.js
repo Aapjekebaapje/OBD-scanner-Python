@@ -53,6 +53,7 @@ let demoPresetRequestPending = false;
 let limitedMode = false;
 let pollProfile = "balanced";
 let simpleMode = false;
+let garageSearchTimer = null;
 const rpmChartPoints = [];
 const speedChartPoints = [];
 const coolantChartPoints = [];
@@ -2584,10 +2585,8 @@ async function saveScanSnapshotToResult(resultElement, label) {
 
 function garageFilterParams() {
     const params = new URLSearchParams();
-    const vin = (byId("garage-filter-vin")?.value || "").trim().toUpperCase();
-    const plate = (byId("garage-filter-plate")?.value || "").trim().toUpperCase();
-    if (vin) params.set("vin", vin);
-    if (plate) params.set("plate", plate);
+    const query = (byId("garage-filter-search")?.value || "").trim();
+    if (query) params.set("q", query);
     return params;
 }
 
@@ -2635,33 +2634,75 @@ function renderGarageNotes(notes) {
         const row = document.createElement("div");
         row.className = "history-row garage-note-row";
         row.style.animationDelay = `${Math.min(index * 24, 260)}ms`;
-        const identity = [note.vin, note.plate].filter(Boolean).join(" | ") || "--";
+        const noteId = Number(note.id || 0);
+        const identityChips = [
+            note.created_at,
+            note.vin ? `VIN ${note.vin}` : "",
+            note.plate ? `${tr("history_type_plate", "Plate")} ${note.plate}` : "",
+            note.mileage || ""
+        ].filter(Boolean).map((value) => `<span>${value}</span>`).join("");
         row.innerHTML = `
-            <div>
+            <div class="garage-note-content">
                 <strong>${note.title || tr("garage_note", "Garage note")}</strong>
-                <p>${note.created_at || "--"} | ${identity} | ${note.mileage || "--"}</p>
-                <span>${note.note || ""}</span>
+                <div class="garage-note-meta">${identityChips || "<span>--</span>"}</div>
+                <p>${note.note || ""}</p>
             </div>
-            <div class="history-health">
-                <strong>${displayValue(note.payload?.health?.score, "--")}</strong>
-                <p>${tr("history_health_score", "Health score")}</p>
-            </div>
+            <button class="icon-action danger-icon garage-note-delete" type="button" data-garage-note-id="${noteId}" aria-label="${tr("garage_delete_title", "Delete garage note?")}">🗑</button>
         `;
         list.appendChild(row);
+    });
+    list.querySelectorAll("[data-garage-note-id]").forEach((button) => {
+        button.addEventListener("click", deleteGarageNote);
     });
 }
 
 function clearGarageFilter() {
-    const vin = byId("garage-filter-vin");
-    const plate = byId("garage-filter-plate");
-    if (vin) vin.value = "";
-    if (plate) plate.value = "";
+    const search = byId("garage-filter-search");
+    if (search) search.value = "";
     fetchGarageNotes();
+}
+
+function scheduleGarageSearch() {
+    if (garageSearchTimer) {
+        window.clearTimeout(garageSearchTimer);
+    }
+    garageSearchTimer = window.setTimeout(() => {
+        garageSearchTimer = null;
+        fetchGarageNotes();
+    }, 180);
 }
 
 function exportGarageNotes() {
     const params = garageFilterParams();
     window.location.href = `/api/garage-notes/export${params.toString() ? `?${params.toString()}` : ""}`;
+}
+
+async function deleteGarageNote(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const noteId = Number(event.currentTarget?.dataset?.garageNoteId || 0);
+    if (!noteId) return;
+
+    const confirmed = await openConfirmDialog(
+        tr("garage_delete_title", "Delete garage note?"),
+        tr("garage_delete_message", "This garage note will be permanently removed from the local database.")
+    );
+    if (!confirmed) return;
+
+    try {
+        const response = await fetch(`/api/garage-notes/${noteId}`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ confirm: "YES" })
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.message || `Server returned status ${response.status}`);
+        setText("garage-note-result", tr("garage_deleted", "Garage note deleted."));
+        fetchGarageNotes();
+    } catch (error) {
+        console.error(error);
+        setText("garage-note-result", error.message || tr("garage_delete_failed", "Garage note could not be deleted."));
+    }
 }
 
 async function saveGarageNote(event) {
@@ -2775,7 +2816,6 @@ on("scan-codes-button", "click", scanCodes);
 on("refresh-supported-button", "click", fetchSupportedSensors);
 on("save-scan-button", "click", saveScanToDatabase);
 on("reset-ui-cache-button", "click", resetUiCache);
-on("garage-filter-button", "click", fetchGarageNotes);
 on("garage-clear-filter-button", "click", clearGarageFilter);
 on("garage-export-button", "click", exportGarageNotes);
 const reportExportButton = byId("report-export-button");
@@ -2811,17 +2851,16 @@ const garageNoteForm = byId("garage-note-form");
 if (garageNoteForm) {
     garageNoteForm.addEventListener("submit", saveGarageNote);
 }
-["garage-filter-vin", "garage-filter-plate"].forEach((id) => {
-    const input = byId(id);
-    if (input) {
-        input.addEventListener("keydown", (event) => {
-            if (event.key === "Enter") {
-                event.preventDefault();
-                fetchGarageNotes();
-            }
-        });
-    }
-});
+const garageSearchInput = byId("garage-filter-search");
+if (garageSearchInput) {
+    garageSearchInput.addEventListener("input", scheduleGarageSearch);
+    garageSearchInput.addEventListener("search", fetchGarageNotes);
+    garageSearchInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+            event.preventDefault();
+        }
+    });
+}
 
 initLanguageSwitcher();
 initPortDropdown();

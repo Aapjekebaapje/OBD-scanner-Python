@@ -37,6 +37,7 @@ from scanner_core.obd_services import (
 from scanner_core.report_services import build_purchase_report
 from scanner_core.session_services import build_scanner_session_state
 from scanner_core.storage_services import (
+    delete_garage_note as storage_delete_garage_note,
     db_path_from_file,
     get_recent_garage_notes as storage_get_recent_garage_notes,
     get_recent_scans as storage_get_recent_scans,
@@ -1105,9 +1106,10 @@ def get_recent_garage_notes(limit=SCAN_HISTORY_LIMIT):
     return storage_get_recent_garage_notes(DB_PATH, limit)
 
 
-def filter_garage_notes(notes, vin="", plate=""):
+def filter_garage_notes(notes, vin="", plate="", query=""):
     vin = normalize_vin(vin)
     plate = normalize_garage_plate(plate)
+    query_text = str(query or "").strip().upper()
     filtered = []
     for item in notes:
         item_vin = normalize_vin(item.get("vin", ""))
@@ -1116,6 +1118,22 @@ def filter_garage_notes(notes, vin="", plate=""):
             continue
         if plate and plate != item_plate:
             continue
+        if query_text:
+            searchable = " ".join(
+                str(part or "").upper()
+                for part in (
+                    item.get("vin"),
+                    item.get("plate"),
+                    item.get("title"),
+                    item.get("mileage"),
+                    item.get("note"),
+                    item.get("created_at"),
+                )
+            )
+            compact_searchable = re.sub(r"[^A-Z0-9]", "", searchable)
+            compact_query = re.sub(r"[^A-Z0-9]", "", query_text)
+            if query_text not in searchable and (not compact_query or compact_query not in compact_searchable):
+                continue
         filtered.append(item)
     return filtered
 
@@ -1135,6 +1153,10 @@ def save_garage_note_snapshot(vin, plate, title, mileage, note):
         note.strip(),
         payload,
     )
+
+
+def delete_garage_note(note_id):
+    return storage_delete_garage_note(DB_PATH, int(note_id))
 
 
 def render_export_html(payload):
@@ -1230,9 +1252,10 @@ def render_export_html(payload):
 </html>"""
 
 
-def render_garage_notes_export_html(notes, vin="", plate=""):
+def render_garage_notes_export_html(notes, vin="", plate="", query=""):
     vin = normalize_vin(vin)
     plate = normalize_garage_plate(plate)
+    query = str(query or "").strip()
     generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
 
     def metric(label, value):
@@ -1314,9 +1337,9 @@ def render_garage_notes_export_html(notes, vin="", plate=""):
   <main>
     <section class="summary">
       {metric('Notes', len(notes))}
+      {metric('Search', query or 'All')}
       {metric('VIN filter', vin or 'All')}
       {metric('Plate filter', plate or 'All')}
-      {metric('Generated', generated_at)}
     </section>
     {cards}
     <footer>Use this software at your own risk. Licensed under GNU GPLv3.</footer>
@@ -2683,6 +2706,7 @@ def api_garage_notes():
             notes,
             request.args.get("vin", ""),
             request.args.get("plate", ""),
+            request.args.get("q", ""),
         )
         return jsonify(notes)
     except Exception as e:
@@ -2695,10 +2719,11 @@ def api_garage_notes_export():
     try:
         vin = request.args.get("vin", "")
         plate = request.args.get("plate", "")
-        notes = filter_garage_notes(get_recent_garage_notes(), vin, plate)
+        query = request.args.get("q", "")
+        notes = filter_garage_notes(get_recent_garage_notes(), vin, plate, query)
         filename = f"garage-notes-{time.strftime('%Y%m%d-%H%M%S')}.html"
         return Response(
-            render_garage_notes_export_html(notes, vin, plate),
+            render_garage_notes_export_html(notes, vin, plate, query),
             mimetype="text/html",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
@@ -2743,6 +2768,30 @@ def api_garage_notes_save():
         return jsonify({
             "success": False,
             "message": "Garage note could not be saved."
+        }), 500
+
+
+@app.route("/api/garage-notes/<int:note_id>", methods=["DELETE"])
+def api_garage_notes_delete(note_id):
+    payload = request.get_json(silent=True) or {}
+    if payload.get("confirm") != "YES":
+        return jsonify({
+            "success": False,
+            "message": "Confirmation is missing."
+        }), 400
+
+    try:
+        deleted = delete_garage_note(note_id)
+        return jsonify({
+            "success": deleted,
+            "message": "Garage note deleted." if deleted else "Garage note not found.",
+            "notes": get_recent_garage_notes(),
+        }), 200 if deleted else 404
+    except Exception as e:
+        log_error("Delete garage note", e)
+        return jsonify({
+            "success": False,
+            "message": "Garage note could not be deleted."
         }), 500
 
 

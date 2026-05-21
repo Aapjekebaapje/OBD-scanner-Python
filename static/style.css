@@ -1411,7 +1411,7 @@ button:disabled {
 }
 
 .garage-filter-bar {
-    grid-template-columns: minmax(130px, 1fr) minmax(120px, 0.8fr) auto auto auto;
+    grid-template-columns: minmax(220px, 1fr) auto auto;
 }
 
 .garage-filter-bar input {
@@ -1422,6 +1422,85 @@ button:disabled {
     font: inherit;
     min-height: 44px;
     padding: 10px 12px;
+}
+
+.garage-note-row {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 18px 20px;
+}
+
+.garage-note-content {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+}
+
+.garage-note-content strong {
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1.25;
+}
+
+.garage-note-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
+.garage-note-meta span {
+    background: #eef5ff;
+    border: 1px solid rgba(13, 110, 253, 0.14);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.2;
+    padding: 6px 9px;
+}
+
+.garage-note-content p {
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0;
+    white-space: pre-wrap;
+}
+
+.garage-note-delete {
+    align-self: start;
+}
+
+.icon-action {
+    align-items: center;
+    background: #eef5ff;
+    border: 1px solid rgba(87, 108, 138, 0.22);
+    border-radius: 14px;
+    color: var(--text);
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 16px;
+    height: 40px;
+    justify-content: center;
+    line-height: 1;
+    min-width: 40px;
+    padding: 0;
+    transition: transform 160ms ease, border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.icon-action:hover {
+    transform: translateY(-1px);
+}
+
+.danger-icon {
+    background: #fff5f5;
+    border-color: rgba(225, 77, 77, 0.22);
+    color: #c92a2a;
+}
+
+.danger-icon:hover {
+    background: #ffe3e3;
+    border-color: rgba(225, 77, 77, 0.34);
 }
 
 .history-detail-panel {
