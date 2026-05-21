@@ -163,11 +163,13 @@ scanner_config.db
 
 This file is created and updated locally when you use the app.
 
-## Safety
+## Safety and Disclaimer
 
 Be careful when clearing fault codes. Clearing DTCs can remove diagnostic evidence that may be useful for repair work. The app includes SAFE mode protection to prevent accidental clearing.
 
 Do not use the dashboard while driving. Have another person operate the software or use it only while parked.
+
+This project is provided for educational and personal diagnostic use. Use it at your own risk. The author is not responsible for any damage, data loss, broken adapters, vehicle issues, incorrect diagnostics, cleared fault codes, repair costs, or any other problems caused directly or indirectly by using this software.
 
 ## Troubleshooting
 
@@ -189,4 +191,6 @@ If live data is empty:
 
 ## License
 
-No license has been added yet. Add a license file before publishing if you want others to use, modify or distribute the project.
+This project is licensed under the GNU General Public License v3.0.
+
+You are allowed to use, modify, share and distribute this project under the terms of the GPLv3. If you distribute modified versions, you must also provide the source code under the same license.
