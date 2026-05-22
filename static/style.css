@@ -112,6 +112,37 @@
     }
 }
 
+@keyframes popIn {
+    from {
+        opacity: 0;
+        transform: translateY(12px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes overlayFadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes feedbackFlash {
+    0% {
+        background: rgba(13, 110, 253, 0.1);
+        transform: translateY(-1px);
+    }
+    100% {
+        background: transparent;
+        transform: translateY(0);
+    }
+}
+
 html {
     height: 100%;
     overflow: hidden;
@@ -417,6 +448,35 @@ button:disabled {
 .danger-action:hover,
 .primary-toggle:hover {
     transform: translateY(-2px);
+}
+
+.module-button:active,
+.secondary-action:active,
+.port-form button:active,
+.danger-action:active,
+.primary-toggle:active,
+.icon-action:active {
+    transform: translateY(0) scale(0.98);
+}
+
+input,
+textarea,
+select,
+button {
+    transition:
+        transform 160ms ease,
+        box-shadow 160ms ease,
+        border-color 160ms ease,
+        background 160ms ease,
+        color 160ms ease;
+}
+
+input:focus,
+textarea:focus,
+select:focus {
+    border-color: rgba(13, 110, 253, 0.48) !important;
+    box-shadow: 0 0 0 4px rgba(13, 110, 253, 0.08);
+    outline: none;
 }
 
 .module-button {
@@ -1378,9 +1438,21 @@ button:disabled {
     padding: 12px 13px;
 }
 
+.garage-note-form .input-error {
+    background: #fff5f5;
+    border-color: rgba(225, 77, 77, 0.55);
+    box-shadow: 0 0 0 3px rgba(225, 77, 77, 0.08);
+}
+
 .garage-note-form textarea {
     min-height: 150px;
     resize: vertical;
+}
+
+.garage-form-actions {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .garage-active-vehicle,
@@ -1428,6 +1500,18 @@ button:disabled {
     align-items: start;
     grid-template-columns: minmax(0, 1fr) auto;
     padding: 18px 20px;
+}
+
+.garage-note-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.action-help {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+    margin: 10px 0 0;
 }
 
 .garage-note-content {
@@ -2261,6 +2345,10 @@ button:disabled {
     margin: -4px 0 14px;
 }
 
+.is-updating {
+    animation: feedbackFlash 360ms ease;
+}
+
 .simple-summary-panel[hidden] {
     display: none;
 }
@@ -2872,6 +2960,10 @@ button:disabled {
     z-index: 60;
 }
 
+.confirm-overlay.is-open {
+    animation: overlayFadeIn 180ms ease both;
+}
+
 .confirm-overlay[hidden] {
     display: none !important;
 }
@@ -2884,6 +2976,10 @@ button:disabled {
     max-width: 420px;
     padding: 24px;
     width: min(100%, 420px);
+}
+
+.confirm-overlay.is-open .confirm-dialog {
+    animation: popIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
 .confirm-dialog h2,

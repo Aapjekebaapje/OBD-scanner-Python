@@ -8,7 +8,7 @@ missing values, or the dashboard feels noisy, increase the intervals a little.
 """
 
 # Version shown in the dashboard, sidebar and exported HTML reports.
-APP_VERSION = "v0.3.1"
+APP_VERSION = "v0.4.0"
 
 # Main dashboard refresh loop.
 # This controls the general live-data update speed for normal sensor values.

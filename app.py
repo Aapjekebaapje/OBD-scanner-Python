@@ -26,6 +26,13 @@ from werkzeug.exceptions import HTTPException
 
 from scanner_core.cache_services import load_vin_cache, save_vin_cache
 from scanner_core.dtc_catalog import enrich_dtc
+from scanner_core.garage_services import (
+    filter_garage_notes,
+    normalize_garage_plate,
+    normalize_garage_vin,
+    render_garage_notes_export_html,
+    validate_garage_note_identity,
+)
 from scanner_core.obd_services import (
     connection_quality_snapshot as build_connection_quality_snapshot,
     detect_connection_hint,
@@ -46,6 +53,7 @@ from scanner_core.storage_services import (
     save_garage_note as storage_save_garage_note,
     save_scan_snapshot as storage_save_scan_snapshot,
     set_setting as storage_set_setting,
+    update_garage_note as storage_update_garage_note,
 )
 from scanner_core.translation import LANGUAGE_OPTIONS, get_language, get_translations, localize_payload, translate
 
@@ -1098,44 +1106,8 @@ def save_scan_snapshot(label):
     return storage_save_scan_snapshot(DB_PATH, created_at, label, summary, payload)
 
 
-def normalize_garage_plate(value):
-    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
-
-
 def get_recent_garage_notes(limit=SCAN_HISTORY_LIMIT):
     return storage_get_recent_garage_notes(DB_PATH, limit)
-
-
-def filter_garage_notes(notes, vin="", plate="", query=""):
-    vin = normalize_vin(vin)
-    plate = normalize_garage_plate(plate)
-    query_text = str(query or "").strip().upper()
-    filtered = []
-    for item in notes:
-        item_vin = normalize_vin(item.get("vin", ""))
-        item_plate = normalize_garage_plate(item.get("plate", ""))
-        if vin and vin != item_vin:
-            continue
-        if plate and plate != item_plate:
-            continue
-        if query_text:
-            searchable = " ".join(
-                str(part or "").upper()
-                for part in (
-                    item.get("vin"),
-                    item.get("plate"),
-                    item.get("title"),
-                    item.get("mileage"),
-                    item.get("note"),
-                    item.get("created_at"),
-                )
-            )
-            compact_searchable = re.sub(r"[^A-Z0-9]", "", searchable)
-            compact_query = re.sub(r"[^A-Z0-9]", "", query_text)
-            if query_text not in searchable and (not compact_query or compact_query not in compact_searchable):
-                continue
-        filtered.append(item)
-    return filtered
 
 
 def save_garage_note_snapshot(vin, plate, title, mileage, note):
@@ -1157,6 +1129,18 @@ def save_garage_note_snapshot(vin, plate, title, mileage, note):
 
 def delete_garage_note(note_id):
     return storage_delete_garage_note(DB_PATH, int(note_id))
+
+
+def update_garage_note(note_id, vin, plate, title, mileage, note):
+    return storage_update_garage_note(
+        DB_PATH,
+        int(note_id),
+        normalize_garage_vin(vin),
+        normalize_garage_plate(plate),
+        title.strip() or "Garage note",
+        mileage.strip() or "--",
+        note.strip(),
+    )
 
 
 def render_export_html(payload):
@@ -1250,103 +1234,6 @@ def render_export_html(payload):
   <p class="note">Standard OBD-II only. ABS, airbag and body modules may require brand-specific diagnostics.</p>
 </body>
 </html>"""
-
-
-def render_garage_notes_export_html(notes, vin="", plate="", query=""):
-    vin = normalize_vin(vin)
-    plate = normalize_garage_plate(plate)
-    query = str(query or "").strip()
-    generated_at = time.strftime("%Y-%m-%d %H:%M:%S")
-
-    def metric(label, value):
-        return (
-            '<div class="metric">'
-            f"<span>{escape(str(label))}</span>"
-            f"<strong>{escape(str(value or '--'))}</strong>"
-            "</div>"
-        )
-
-    def note_card(item):
-        payload = item.get("payload") or {}
-        health = payload.get("health") or {}
-        status = payload.get("status") or {}
-        vehicle = payload.get("vehicle") or {}
-        return f"""
-        <article class="note-card">
-          <div class="note-head">
-            <div>
-              <span>{escape(item.get('created_at', '--'))}</span>
-              <h2>{escape(item.get('title') or 'Garage note')}</h2>
-            </div>
-            <strong>{escape(item.get('mileage') or '--')}</strong>
-          </div>
-          <div class="identity-row">
-            <span>VIN: {escape(item.get('vin') or '--')}</span>
-            <span>Plate: {escape(item.get('plate') or '--')}</span>
-          </div>
-          <p class="note-text">{escape(item.get('note') or '')}</p>
-          <div class="metric-grid">
-            {metric('Health score', health.get('score', '--'))}
-            {metric('Protocol', status.get('protocol', 'Unknown'))}
-            {metric('RPM', (vehicle.get('rpm') or {}).get('value', '--'))}
-            {metric('Speed', (vehicle.get('speed') or {}).get('value', '--'))}
-          </div>
-        </article>
-        """
-
-    cards = "\n".join(note_card(item) for item in notes) or '<p class="empty">No garage notes found for this filter.</p>'
-    return f"""<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Garage Notes Export</title>
-  <style>
-    :root {{ color-scheme: light; --blue:#0d6efd; --text:#172033; --muted:#64748b; --line:#d6e0ec; }}
-    * {{ box-sizing: border-box; }}
-    body {{ margin: 0; background: #eef4fb; color: var(--text); font-family: Segoe UI, Arial, sans-serif; }}
-    .hero {{ background: linear-gradient(135deg, #0d6efd, #153e9f); color: #fff; padding: 34px 40px; }}
-    .hero span {{ display:block; font-size:12px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; opacity:.86; }}
-    .hero h1 {{ margin: 8px 0 10px; font-size: 34px; }}
-    .hero p {{ margin: 0; opacity: .9; }}
-    main {{ max-width: 1120px; margin: 0 auto; padding: 26px; }}
-    .summary {{ display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin-top: -48px; margin-bottom: 18px; }}
-    .metric, .note-card {{ background: rgba(255,255,255,.96); border:1px solid var(--line); border-radius:18px; box-shadow:0 16px 40px rgba(40,68,110,.10); }}
-    .metric {{ padding: 16px; }}
-    .metric span {{ display:block; color:var(--muted); font-size:11px; font-weight:900; letter-spacing:.12em; text-transform:uppercase; }}
-    .metric strong {{ display:block; margin-top:6px; font-size:20px; }}
-    .note-card {{ margin: 14px 0; padding: 20px; }}
-    .note-head {{ display:flex; justify-content:space-between; gap:16px; border-bottom:1px solid var(--line); padding-bottom:14px; }}
-    .note-head span, .identity-row, .note-text {{ color: var(--muted); }}
-    .note-head h2 {{ margin:4px 0 0; font-size:24px; }}
-    .identity-row {{ display:flex; flex-wrap:wrap; gap:10px; margin:14px 0; font-weight:700; }}
-    .identity-row span {{ background:#edf5ff; border:1px solid #cfe2ff; border-radius:999px; padding:7px 10px; }}
-    .note-text {{ white-space:pre-wrap; line-height:1.55; }}
-    .metric-grid {{ display:grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap:10px; margin-top:16px; }}
-    .empty {{ background:#fff; border:1px dashed var(--line); border-radius:18px; padding:20px; color:var(--muted); }}
-    footer {{ color: var(--muted); margin: 24px 0; font-size: 13px; }}
-    @media (max-width: 760px) {{ .summary, .metric-grid {{ grid-template-columns:1fr; }} .hero {{ padding:26px 22px; }} main {{ padding:18px; }} }}
-  </style>
-</head>
-<body>
-  <section class="hero">
-    <span>Car-OBD-Diagnostics {escape(APP_VERSION)}</span>
-    <h1>Garage Notes Export</h1>
-    <p>Generated at {escape(generated_at)}</p>
-  </section>
-  <main>
-    <section class="summary">
-      {metric('Notes', len(notes))}
-      {metric('Search', query or 'All')}
-      {metric('VIN filter', vin or 'All')}
-      {metric('Plate filter', plate or 'All')}
-    </section>
-    {cards}
-    <footer>Use this software at your own risk. Licensed under GNU GPLv3.</footer>
-  </main>
-</body>
-</html>"""
-
 
 def get_recent_scans(limit=SCAN_HISTORY_LIMIT):
     return storage_get_recent_scans(DB_PATH, limit)
@@ -2723,7 +2610,7 @@ def api_garage_notes_export():
         notes = filter_garage_notes(get_recent_garage_notes(), vin, plate, query)
         filename = f"garage-notes-{time.strftime('%Y%m%d-%H%M%S')}.html"
         return Response(
-            render_garage_notes_export_html(notes, vin, plate, query),
+            render_garage_notes_export_html(notes, APP_VERSION, vin, plate, query),
             mimetype="text/html",
             headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
@@ -2738,17 +2625,20 @@ def api_garage_notes_save():
     with state_lock:
         profile = dict(vehicle_profile)
 
-    vin = normalize_vin(payload.get("vin") or profile.get("vin") or "")
-    plate = normalize_garage_plate(payload.get("plate") or profile.get("plate_query") or "")
+    raw_vin = payload.get("vin") or profile.get("vin") or ""
+    raw_plate = payload.get("plate") or profile.get("plate_query") or ""
+    valid_identity, identity_message = validate_garage_note_identity(raw_vin, raw_plate)
+    if not valid_identity:
+        return jsonify({
+            "success": False,
+            "message": identity_message
+        }), 400
+
+    vin = normalize_vin(raw_vin)
+    plate = normalize_garage_plate(raw_plate)
     title = str(payload.get("title", "")).strip()
     mileage = str(payload.get("mileage", "")).strip()
     note = str(payload.get("note", "")).strip()
-
-    if not vin or not plate:
-        return jsonify({
-            "success": False,
-            "message": "Garage notes require both VIN and license plate. Enter them manually or load/detect them first."
-        }), 400
 
     if not note:
         return jsonify({
@@ -2792,6 +2682,43 @@ def api_garage_notes_delete(note_id):
         return jsonify({
             "success": False,
             "message": "Garage note could not be deleted."
+        }), 500
+
+
+@app.route("/api/garage-notes/<int:note_id>", methods=["PUT"])
+def api_garage_notes_update(note_id):
+    payload = request.get_json(silent=True) or {}
+    raw_vin = payload.get("vin") or ""
+    raw_plate = payload.get("plate") or ""
+    valid_identity, identity_message = validate_garage_note_identity(raw_vin, raw_plate)
+    if not valid_identity:
+        return jsonify({
+            "success": False,
+            "message": identity_message
+        }), 400
+
+    title = str(payload.get("title", "")).strip()
+    mileage = str(payload.get("mileage", "")).strip()
+    note = str(payload.get("note", "")).strip()
+
+    if not note:
+        return jsonify({
+            "success": False,
+            "message": "Note text is required."
+        }), 400
+
+    try:
+        updated = update_garage_note(note_id, raw_vin, raw_plate, title, mileage, note)
+        return jsonify({
+            "success": updated,
+            "message": "Garage note updated." if updated else "Garage note not found.",
+            "notes": get_recent_garage_notes(),
+        }), 200 if updated else 404
+    except Exception as e:
+        log_error("Update garage note", e)
+        return jsonify({
+            "success": False,
+            "message": "Garage note could not be updated."
         }), 500
 
 

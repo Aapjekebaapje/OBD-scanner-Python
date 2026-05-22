@@ -135,6 +135,7 @@ def save_garage_note(db_path, created_at, vin, plate, title, mileage, note, payl
         db.commit()
 
     return {
+        "id": None,
         "created_at": created_at,
         "vin": vin,
         "plate": plate,
@@ -142,6 +143,21 @@ def save_garage_note(db_path, created_at, vin, plate, title, mileage, note, payl
         "mileage": mileage,
         "note": note,
     }
+
+
+def update_garage_note(db_path, note_id, vin, plate, title, mileage, note):
+    with sqlite3.connect(db_path) as db:
+        cursor = db.execute(
+            """
+            UPDATE garage_notes
+            SET vin = ?, plate = ?, title = ?, mileage = ?, note = ?
+            WHERE id = ?
+            """,
+            (vin, plate, title, mileage, note, note_id),
+        )
+        db.commit()
+
+    return cursor.rowcount > 0
 
 
 def get_recent_garage_notes(db_path, limit):

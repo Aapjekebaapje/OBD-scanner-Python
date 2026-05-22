@@ -23,7 +23,10 @@
                 <input id="garage-note-mileage" name="mileage" type="text" maxlength="40" placeholder="{{ i18n.garage.mileage_placeholder }}">
                 <label for="garage-note-text">{{ i18n.garage.note_label }}</label>
                 <textarea id="garage-note-text" name="note" rows="7" required placeholder="{{ i18n.garage.note_placeholder }}"></textarea>
-                <button class="secondary-action" type="submit">{{ i18n.garage.save }}</button>
+                <div class="garage-form-actions">
+                    <button id="garage-note-submit" class="secondary-action" type="submit">{{ i18n.garage.save }}</button>
+                    <button id="garage-note-cancel-edit" class="secondary-action" type="button" hidden>{{ i18n.garage.cancel_edit }}</button>
+                </div>
             </form>
             <p id="garage-note-result" class="panel-note">{{ i18n.garage.result }}</p>
         </article>

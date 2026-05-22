@@ -4,7 +4,7 @@ A Python and Flask based OBD-II diagnostic dashboard for reading live ECU data, 
 
 The project includes a tablet-style web interface, English and Dutch language support, local scan history, VIN/license plate workflows and a built-in demo mode for testing without a car connected.
 
-Current version: `v0.3.1`
+Current version: `v0.4.0`
 
 ## Features
 
@@ -25,8 +25,13 @@ Current version: `v0.3.1`
 - Local scan history stored in SQLite
 - Garage notes saved per VIN and license plate
 - Garage note live search across VIN, license plate, title, mileage, note text and date
-- Garage note styled HTML export
+- Cleaner garage note cards with VIN, license plate, mileage and note metadata
+- Garage note validation with clear feedback for invalid VINs, missing plates and empty notes
+- Cleaner garage note styled HTML export
+- Garage note edit action for updating saved notes
 - Garage note delete action with confirmation popup
+- Split garage note validation, filtering and HTML export logic into `scanner_core/garage_services.py`
+- Extra UI animations for page changes, popups, actions, form feedback and status text
 - USB / COM port selection
 - Connection test and adapter status view
 - Connection quality view for USB adapter, OBD port, ECU and live data state
@@ -54,6 +59,12 @@ Features such as Driver Alert, speed warning, lane assist or other assistance se
 VIN reading and VIN based vehicle information are experimental. The VIN feature can still contain bugs and may not work correctly on every vehicle, adapter or ECU response format. It is not guaranteed to be 100% accurate. This may be improved in future updates, but it is also possible that this feature changes heavily or gets removed if it cannot be made reliable enough.
 
 License plate lookup currently only supports Dutch license plates through RDW data. International license plate lookup may be added in a future update, but this is not guaranteed. This feature may also change or be removed later if it becomes unreliable or too limited.
+
+## Fault Codes Testing Note
+
+Fault code reading, pending codes, permanent codes and fault-code clearing have not been fully tested on many real vehicles yet. If you test this project with a real car and notice missing codes, wrong descriptions, unstable behavior or anything else related to error codes, feedback is very welcome.
+
+You can share feedback here: https://discord.gg/caGWQv3VBC
 
 ## Requirements
 
@@ -199,14 +210,18 @@ The app can auto-fill these fields when vehicle data is detected, but they can a
 
 Saved garage notes use a clean card layout with compact metadata chips for date/time, VIN, license plate and mileage. The garage database has one live search bar that filters while typing across VIN, license plate, title, mileage, note text and date/time.
 
-Filtered garage notes can be exported as a styled HTML report. Notes can also be deleted from the local database with a trash button and confirmation popup.
+The form gives clear feedback before saving. It checks for missing VIN, short VIN, invalid VIN characters, missing license plate, short license plate and empty note text. Invalid fields are highlighted so the problem is easier to see.
+
+Filtered garage notes can be exported as a styled HTML report. The garage export focuses on the saved note details and removes unrelated live-data blocks such as health score, protocol, RPM and speed from each note card. Notes can also be deleted from the local database with a trash button and confirmation popup.
+
+Saved garage notes can be edited later. Editing fills the note form with the existing VIN, license plate, title, mileage and note text, then updates the local SQLite record when saved.
 
 ## Configuration
 
 Refresh timings and history limits can be adjusted in `config.py`.
 
 ```python
-APP_VERSION = "v0.3.1"
+APP_VERSION = "v0.4.0"
 POLL_INTERVAL = 0.1
 RPM_POLL_INTERVAL = 0.05
 OBD_CONNECT_TIMEOUT = 1.0
@@ -249,6 +264,7 @@ The selected language is stored in the `obd_lang` browser cookie.
 |   |-- cache_services.py
 |   |-- demo_services.py
 |   |-- dtc_catalog.py
+|   |-- garage_services.py
 |   |-- obd_services.py
 |   |-- report_services.py
 |   |-- session_services.py
@@ -274,7 +290,15 @@ scanner_config.db
 
 This file is created and updated locally when you use the app. It stores settings, scan history and garage notes. Deleted garage notes are removed from this local database. Browser-side UI state and VIN/license plate lookup history are stored in `localStorage`.
 
-Use the Reset UI Cache button on the System page if the browser keeps old dashboard state after an update.
+Use the Reset UI Cache button on the System page if the browser keeps old dashboard state after an update. This only clears browser-side UI state such as selected polling profile, language cookie and local lookup history. It does not delete saved scans or garage notes from `scanner_config.db`.
+
+## Known Bugs And Limitations
+
+- VIN detection and VIN based vehicle details can still be unreliable on some cars or adapter response formats.
+- Fault code reading and clearing have not been fully tested on many real vehicles yet.
+- Standard OBD-II does not guarantee access to ABS, airbag, BCM, ADAS, odometer or manufacturer-specific modules.
+- Live RPM and speed responsiveness depends on the ECU, adapter, serial connection, Python polling and browser rendering.
+- Dutch RDW license plate lookup only supports Dutch plates for now.
 
 ## Troubleshooting
 

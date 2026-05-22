@@ -54,6 +54,7 @@ let limitedMode = false;
 let pollProfile = "balanced";
 let simpleMode = false;
 let garageSearchTimer = null;
+let editingGarageNoteId = null;
 const rpmChartPoints = [];
 const speedChartPoints = [];
 const coolantChartPoints = [];
@@ -81,6 +82,7 @@ function setText(id, value) {
     const next = String(value);
     if (element.textContent !== next) {
         element.textContent = next;
+        pulseElement(element, "is-updating");
     }
 }
 
@@ -280,6 +282,16 @@ function positionGaugeTicks() {
 
 function sanitizeKey(value) {
     return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+    }[char]));
 }
 
 function clearContainerEmptyState(container) {
@@ -2482,10 +2494,14 @@ function openConfirmDialog(title, message) {
     titleElement.innerText = title;
     messageElement.innerText = message;
     overlay.hidden = false;
+    overlay.classList.add("is-open");
 
     return new Promise((resolve) => {
         const cleanup = (result) => {
-            overlay.hidden = true;
+            overlay.classList.remove("is-open");
+            window.setTimeout(() => {
+                overlay.hidden = true;
+            }, 160);
             yesButton.removeEventListener("click", handleYes);
             noButton.removeEventListener("click", handleNo);
             overlay.removeEventListener("click", handleBackdrop);
@@ -2635,21 +2651,35 @@ function renderGarageNotes(notes) {
         row.className = "history-row garage-note-row";
         row.style.animationDelay = `${Math.min(index * 24, 260)}ms`;
         const noteId = Number(note.id || 0);
+        const editPayload = encodeURIComponent(JSON.stringify({
+            id: noteId,
+            vin: note.vin || "",
+            plate: note.plate || "",
+            title: note.title || "",
+            mileage: note.mileage || "",
+            note: note.note || ""
+        }));
         const identityChips = [
             note.created_at,
             note.vin ? `VIN ${note.vin}` : "",
             note.plate ? `${tr("history_type_plate", "Plate")} ${note.plate}` : "",
             note.mileage || ""
-        ].filter(Boolean).map((value) => `<span>${value}</span>`).join("");
+        ].filter(Boolean).map((value) => `<span>${escapeHtml(value)}</span>`).join("");
         row.innerHTML = `
             <div class="garage-note-content">
-                <strong>${note.title || tr("garage_note", "Garage note")}</strong>
+                <strong>${escapeHtml(note.title || tr("garage_note", "Garage note"))}</strong>
                 <div class="garage-note-meta">${identityChips || "<span>--</span>"}</div>
-                <p>${note.note || ""}</p>
+                <p>${escapeHtml(note.note || "")}</p>
             </div>
-            <button class="icon-action danger-icon garage-note-delete" type="button" data-garage-note-id="${noteId}" aria-label="${tr("garage_delete_title", "Delete garage note?")}">🗑</button>
+            <div class="garage-note-actions">
+                <button class="icon-action garage-note-edit" type="button" data-garage-note="${editPayload}" aria-label="${escapeHtml(tr("garage_edit", "Edit garage note"))}">&#9998;</button>
+                <button class="icon-action danger-icon garage-note-delete" type="button" data-garage-note-id="${noteId}" aria-label="${escapeHtml(tr("garage_delete_title", "Delete garage note?"))}">&#128465;</button>
+            </div>
         `;
         list.appendChild(row);
+    });
+    list.querySelectorAll("[data-garage-note]").forEach((button) => {
+        button.addEventListener("click", editGarageNote);
     });
     list.querySelectorAll("[data-garage-note-id]").forEach((button) => {
         button.addEventListener("click", deleteGarageNote);
@@ -2675,6 +2705,117 @@ function scheduleGarageSearch() {
 function exportGarageNotes() {
     const params = garageFilterParams();
     window.location.href = `/api/garage-notes/export${params.toString() ? `?${params.toString()}` : ""}`;
+}
+
+function normalizeGarageVinInput(value) {
+    return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeGaragePlateInput(value) {
+    return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function setGarageFieldError(input, hasError) {
+    if (input) {
+        input.classList.toggle("input-error", Boolean(hasError));
+    }
+}
+
+function setGarageEditMode(note = null) {
+    editingGarageNoteId = note?.id ? Number(note.id) : null;
+    const submit = byId("garage-note-submit");
+    const cancel = byId("garage-note-cancel-edit");
+    if (submit) {
+        submit.textContent = editingGarageNoteId
+            ? tr("garage_update", "Update Note")
+            : tr("garage_save", "Save Note");
+    }
+    if (cancel) {
+        cancel.hidden = !editingGarageNoteId;
+    }
+    if (!editingGarageNoteId) {
+        setGarageFieldError(byId("garage-note-vin"), false);
+        setGarageFieldError(byId("garage-note-plate"), false);
+        setGarageFieldError(byId("garage-note-text"), false);
+    }
+}
+
+function editGarageNote(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const raw = event.currentTarget?.dataset?.garageNote;
+    if (!raw) return;
+    let note = null;
+    try {
+        note = JSON.parse(decodeURIComponent(raw));
+    } catch (error) {
+        console.error(error);
+        return;
+    }
+    byId("garage-note-vin").value = note.vin || "";
+    byId("garage-note-plate").value = note.plate || "";
+    byId("garage-note-title").value = note.title || "";
+    byId("garage-note-mileage").value = note.mileage || "";
+    byId("garage-note-text").value = note.note || "";
+    setGarageEditMode(note);
+    setText("garage-note-result", tr("garage_editing", "Editing garage note. Update or cancel when you are done."));
+    byId("garage-note-vin")?.focus();
+}
+
+function cancelGarageEdit() {
+    const form = byId("garage-note-form");
+    if (form) form.reset();
+    setGarageEditMode(null);
+    updateVehicleProfileView(lastVehicleProfile);
+    setText("garage-note-result", tr("garage_result", "No garage note saved yet."));
+}
+
+function validateGarageNoteForm() {
+    const vinInput = byId("garage-note-vin");
+    const plateInput = byId("garage-note-plate");
+    const noteInput = byId("garage-note-text");
+    const vin = normalizeGarageVinInput(vinInput?.value);
+    const plate = normalizeGaragePlateInput(plateInput?.value);
+    const noteText = noteInput?.value || "";
+
+    setGarageFieldError(vinInput, false);
+    setGarageFieldError(plateInput, false);
+    setGarageFieldError(noteInput, false);
+
+    if (!vin && !plate) {
+        setGarageFieldError(vinInput, true);
+        setGarageFieldError(plateInput, true);
+        return { ok: false, message: tr("garage_identity_required", "Enter both VIN and license plate before saving a garage note.") };
+    }
+    if (!vin) {
+        setGarageFieldError(vinInput, true);
+        return { ok: false, message: tr("garage_vin_missing", "Enter a VIN before saving this garage note.") };
+    }
+    if (vin.length !== 17) {
+        setGarageFieldError(vinInput, true);
+        return {
+            ok: false,
+            message: tr("garage_vin_invalid_length", "VIN must be exactly 17 characters. You entered {count}.", { count: vin.length })
+        };
+    }
+    if (/[IOQ]/.test(vin)) {
+        setGarageFieldError(vinInput, true);
+        return { ok: false, message: tr("garage_vin_invalid_chars", "VIN cannot contain I, O or Q. Check the VIN and try again.") };
+    }
+    if (!plate) {
+        setGarageFieldError(plateInput, true);
+        return { ok: false, message: tr("garage_plate_missing", "Enter a license plate before saving this garage note.") };
+    }
+    if (plate.length < 4) {
+        setGarageFieldError(plateInput, true);
+        return { ok: false, message: tr("garage_plate_too_short", "License plate looks too short. Check the plate and try again.") };
+    }
+    if (!noteText.trim()) {
+        setGarageFieldError(noteInput, true);
+        return { ok: false, message: tr("garage_note_required", "Write a note before saving.") };
+    }
+
+    return { ok: true, vin, plate, noteText };
 }
 
 async function deleteGarageNote(event) {
@@ -2709,46 +2850,47 @@ async function saveGarageNote(event) {
     event.preventDefault();
     const form = event.currentTarget;
     const resultElement = byId("garage-note-result");
-    const vin = (byId("garage-note-vin")?.value || "").trim().toUpperCase();
-    const plate = (byId("garage-note-plate")?.value || "").trim().toUpperCase();
-    const noteText = byId("garage-note-text")?.value || "";
+    const validation = validateGarageNoteForm();
 
-    if (!vin || !plate) {
-        setText("garage-note-result", tr("garage_identity_required", "Enter both VIN and license plate before saving a garage note."));
+    if (!validation.ok) {
+        setText("garage-note-result", validation.message);
         return;
     }
 
-    if (!noteText.trim()) {
-        setText("garage-note-result", tr("garage_note_required", "Write a note before saving."));
-        return;
-    }
-
-    setText("garage-note-result", tr("garage_saving", "Saving garage note..."));
+    setText("garage-note-result", editingGarageNoteId
+        ? tr("garage_updating", "Updating garage note...")
+        : tr("garage_saving", "Saving garage note..."));
 
     try {
-        const response = await fetch("/api/garage-notes", {
-            method: "POST",
+        const url = editingGarageNoteId ? `/api/garage-notes/${editingGarageNoteId}` : "/api/garage-notes";
+        const response = await fetch(url, {
+            method: editingGarageNoteId ? "PUT" : "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                vin,
-                plate,
+                vin: validation.vin,
+                plate: validation.plate,
                 title: byId("garage-note-title")?.value || "",
                 mileage: byId("garage-note-mileage")?.value || "",
-                note: noteText
+                note: validation.noteText
             })
         });
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.message || `Server returned status ${response.status}`);
         if (resultElement) {
-            resultElement.innerText = tr("garage_saved", "Garage note saved at {time}.", { time: result.note?.created_at || "--" });
+            resultElement.innerText = editingGarageNoteId
+                ? tr("garage_updated", "Garage note updated.")
+                : tr("garage_saved", "Garage note saved at {time}.", { time: result.note?.created_at || "--" });
         }
         form.reset();
+        setGarageEditMode(null);
         renderGarageNotes(result.notes || []);
         updateVehicleProfileView(lastVehicleProfile);
         fetchGarageNotes();
     } catch (error) {
         console.error(error);
-        setText("garage-note-result", error.message || tr("garage_save_failed", "Garage note could not be saved."));
+        setText("garage-note-result", error.message || (editingGarageNoteId
+            ? tr("garage_update_failed", "Garage note could not be updated.")
+            : tr("garage_save_failed", "Garage note could not be saved.")));
     }
 }
 
@@ -2818,6 +2960,7 @@ on("save-scan-button", "click", saveScanToDatabase);
 on("reset-ui-cache-button", "click", resetUiCache);
 on("garage-clear-filter-button", "click", clearGarageFilter);
 on("garage-export-button", "click", exportGarageNotes);
+on("garage-note-cancel-edit", "click", cancelGarageEdit);
 const reportExportButton = byId("report-export-button");
 if (reportExportButton) {
     reportExportButton.addEventListener("click", exportScanReport);
