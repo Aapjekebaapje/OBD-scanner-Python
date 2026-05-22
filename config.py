@@ -9,7 +9,7 @@ missing values, or the dashboard feels noisy, increase the intervals a little.
 """
 
 # Version shown in the dashboard, sidebar and exported HTML reports.
-APP_VERSION = "v0.4.2"
+APP_VERSION = "v0.4.3"
 
 # Main dashboard refresh loop.
 # This controls the general live-data update speed for normal sensor values.
@@ -25,9 +25,14 @@ RPM_POLL_INTERVAL = 0.05
 # Timeout: how long one connection attempt may wait for a response.
 # Attempts: how many times the app tries before giving up.
 # Retry delay: pause between connection attempts.
-OBD_CONNECT_TIMEOUT = 1.0
-OBD_CONNECT_ATTEMPTS = 3
-OBD_CONNECT_RETRY_DELAY = 1.0
+OBD_CONNECT_TIMEOUT = 0.6
+OBD_CONNECT_ATTEMPTS = 2
+OBD_CONNECT_RETRY_DELAY = 0.25
+
+# Fast retry behavior after a failed connect attempt.
+# Keeps reconnects responsive instead of waiting several seconds every cycle.
+OBD_RECONNECT_FAST_DELAY = 0.75
+OBD_RECONNECT_SLOW_DELAY = 2.0
 
 # Maximum live-data delay used by the poll guard.
 # If repeated OBD query errors happen, the app slows polling down up to this

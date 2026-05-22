@@ -3,7 +3,7 @@
     box-sizing: border-box;
 }
 
-/* v0.4.2 motion and page layout refresh.
+/* v0.4.3 motion and page layout refresh.
    Dashboard HTML stays unchanged; these rules reshape the individual pages. */
 @keyframes pageLayerIn {
     from {
@@ -2601,7 +2601,7 @@ select:focus {
     animation: rpmBreath 1.8s ease-in-out infinite;
     position: absolute;
     top: 50%;
-    transition: transform 80ms linear, box-shadow 120ms linear;
+    transition: transform 20ms linear, box-shadow 80ms linear;
     transform: rotate(135deg);
     transform-origin: 0 50%;
     width: 35%;

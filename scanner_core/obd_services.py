@@ -163,7 +163,7 @@ def run_connection_test(obd_module, configured_port, timeout=1.0, attempts=2, re
         selected_port
         and any(str(item.get("device") or "").strip().upper() == selected_port for item in detected_ports)
     )
-    any_adapter_present = selected_port_present or bool(detected_ports)
+    any_usb_serial_present = selected_port_present or bool(detected_ports)
     adapter_detail = (
         configured_port
         if selected_port_present
@@ -175,59 +175,64 @@ def run_connection_test(obd_module, configured_port, timeout=1.0, attempts=2, re
             "success": False,
             "phase": "Library unavailable",
             "steps": [
+                {"name": "USB adapter detected", "ok": any_usb_serial_present, "detail": adapter_detail},
                 {"name": "Python OBD library", "ok": False, "detail": "python-obd is not available."},
             ],
         }
 
     test_connection = None
     last_exception = None
+    phase = "USB adapter detected" if any_usb_serial_present else "No serial ports detected"
+    protocol = "Unknown"
+
     try:
         for attempt in range(1, max(1, int(attempts or 1)) + 1):
             try:
-                if configured_port:
-                    test_connection = obd_module.OBD(
-                        configured_port,
-                        fast=False,
-                        timeout=timeout,
-                        check_voltage=False,
-                    )
-                else:
-                    test_connection = obd_module.OBD(
-                        fast=False,
-                        timeout=timeout,
-                        check_voltage=False,
-                    )
-                if test_connection and test_connection.is_connected():
-                    break
+                test_connection = (
+                    obd_module.OBD(configured_port, fast=False, timeout=timeout, check_voltage=False)
+                    if configured_port
+                    else obd_module.OBD(fast=False, timeout=timeout, check_voltage=False)
+                )
+                if test_connection:
+                    phase = str(test_connection.status() or phase)
+                    if test_connection.is_connected():
+                        protocol = test_connection.protocol_name() or "Unknown"
+                        break
+
                 if attempt < attempts:
                     import time
                     time.sleep(retry_delay)
             except Exception as exc:
                 last_exception = exc
-                try:
-                    if test_connection:
-                        test_connection.close()
-                except Exception:
-                    pass
-                test_connection = None
+                phase = "Connection test failed"
                 if attempt < attempts:
                     import time
                     time.sleep(retry_delay)
+            finally:
+                if test_connection and not test_connection.is_connected():
+                    try:
+                        test_connection.close()
+                    except Exception:
+                        pass
+                    test_connection = None
 
-        if test_connection is None and last_exception:
-            raise last_exception
+        if test_connection and test_connection.is_connected():
+            protocol = test_connection.protocol_name() or "Unknown"
+            phase = str(test_connection.status() or "Car Connected")
 
-        phase = str(test_connection.status())
-        protocol = test_connection.protocol_name() if test_connection.is_connected() else "Unknown"
+        adapter_responding = phase in {"ELM Connected", "OBD Connected", "Car Connected"}
+        obd_protocol_seen = phase in {"OBD Connected", "Car Connected"}
+        ecu_responding = bool(test_connection and test_connection.is_connected())
 
         steps = [
-            {"name": "USB adapter detected", "ok": phase in {"ELM Connected", "OBD Connected", "Car Connected"}, "detail": phase},
-            {"name": "OBD protocol detected", "ok": phase in {"OBD Connected", "Car Connected"}, "detail": protocol},
-            {"name": "ECU responding", "ok": bool(test_connection.is_connected()), "detail": protocol if test_connection.is_connected() else "No ECU response"},
+            {"name": "USB adapter detected", "ok": any_usb_serial_present or adapter_responding, "detail": adapter_detail if any_usb_serial_present else phase},
+            {"name": "Adapter responding", "ok": adapter_responding, "detail": phase if adapter_responding else str(last_exception or "No ELM response yet")},
+            {"name": "OBD port / protocol detected", "ok": obd_protocol_seen, "detail": protocol if obd_protocol_seen else "Adapter found, waiting for vehicle protocol / ignition"},
+            {"name": "ECU responding", "ok": ecu_responding, "detail": protocol if ecu_responding else "No ECU response yet"},
         ]
 
         return {
-            "success": bool(test_connection.is_connected()),
+            "success": ecu_responding,
             "phase": phase,
             "protocol": protocol,
             "steps": steps,
@@ -236,10 +241,12 @@ def run_connection_test(obd_module, configured_port, timeout=1.0, attempts=2, re
         return {
             "success": False,
             "phase": "Connection test failed",
+            "protocol": protocol,
             "steps": [
-                {"name": "USB adapter detected", "ok": any_adapter_present, "detail": adapter_detail if any_adapter_present else str(exc)},
-                {"name": "OBD protocol detected", "ok": False, "detail": "Not available"},
-                {"name": "ECU responding", "ok": False, "detail": str(exc)},
+                {"name": "USB adapter detected", "ok": any_usb_serial_present, "detail": adapter_detail if any_usb_serial_present else str(exc)},
+                {"name": "Adapter responding", "ok": False, "detail": str(exc)},
+                {"name": "OBD port / protocol detected", "ok": False, "detail": "Not available"},
+                {"name": "ECU responding", "ok": False, "detail": "No ECU response"},
             ],
         }
     finally:

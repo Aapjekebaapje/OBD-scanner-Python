@@ -1,5 +1,6 @@
 /* Made by The Syndicate Development */
 const CONNECTED_POLL_MS = 100;
+const GAUGE_POLL_MS = 50;
 const DISCONNECTED_POLL_MS = 1200;
 const TACH_MIN_DEG = 135;
 const TACH_MAX_DEG = 405;
@@ -12,14 +13,13 @@ const PORT_POLL_MS = 1000;
 
 let safeMode = true;
 let pollTimer = null;
+let gaugePollTimer = null;
 let portPollTimer = null;
 let isConnected = false;
 let currentRpm = 0;
 let targetRpm = 0;
 let currentSpeed = 0;
 let targetSpeed = 0;
-let rpmVelocity = 0;
-let speedVelocity = 0;
 let lastGaugeFrameAt = 0;
 let vinRefreshPending = false;
 let activePage = "dashboard";
@@ -68,10 +68,8 @@ const VEHICLE_LOOKUP_HISTORY_LIMIT = 10;
 const POLL_PROFILE_STORAGE_KEY = "obd_poll_profile";
 const demoPresetMeta = new Map();
 let lastChartSampleAt = 0;
-const GAUGE_STIFFNESS = 14;
-const GAUGE_DAMPING = 0.72;
-const RPM_MAX_VELOCITY = 7200;
-const SPEED_MAX_VELOCITY = 220;
+const RPM_DIRECT_SNAP = 35;
+const SPEED_DIRECT_SNAP = 1;
 
 function byId(id) {
     return document.getElementById(id);
@@ -777,6 +775,33 @@ function scheduleNextPoll() {
     pollTimer = window.setTimeout(fetchData, isConnected ? CONNECTED_POLL_MS : DISCONNECTED_POLL_MS);
 }
 
+function scheduleGaugePoll() {
+    window.clearTimeout(gaugePollTimer);
+    gaugePollTimer = window.setTimeout(fetchGaugeData, isConnected || demoMode ? GAUGE_POLL_MS : DISCONNECTED_POLL_MS);
+}
+
+async function fetchGaugeData() {
+    try {
+        if (!isConnected && !demoMode) {
+            return;
+        }
+
+        const response = await fetch("/api/gauges", {
+            signal: AbortSignal.timeout(1200)
+        });
+        if (!response.ok) throw new Error(`Server returned status ${response.status}`);
+
+        const payload = await response.json();
+        if (!isFrozen) {
+            updateGaugeTargets(payload.vehicle || {});
+        }
+    } catch (error) {
+        console.error(error);
+    } finally {
+        scheduleGaugePoll();
+    }
+}
+
 function updateStatus(status, sessionState = {}) {
     const dot = byId("status-dot");
     const reconnectButton = byId("reconnect-button");
@@ -1010,26 +1035,15 @@ function updateGaugeTargets(vehicle) {
     targetSpeed = nextSpeed;
 }
 
-function smoothGaugeValue(current, target, velocity, dt, maxVelocity) {
-    const difference = target - current;
-    const nextVelocity = clamp(
-        (velocity + difference * GAUGE_STIFFNESS * dt) * Math.pow(GAUGE_DAMPING, dt * 60),
-        -maxVelocity,
-        maxVelocity
-    );
-    const nextCurrent = current + nextVelocity * dt;
+function liveGaugeValue(current, target, snapThreshold) {
+    if (!Number.isFinite(target)) return current;
 
-    if (Math.abs(target - nextCurrent) < 0.15 && Math.abs(nextVelocity) < 0.2) {
-        return {
-            current: target,
-            velocity: 0,
-        };
+    const difference = target - current;
+    if (Math.abs(difference) <= snapThreshold) {
+        return target;
     }
 
-    return {
-        current: nextCurrent,
-        velocity: nextVelocity,
-    };
+    return target;
 }
 
 function updateQuickMetrics(vehicle) {
@@ -1645,13 +1659,8 @@ function renderGauges(now = performance.now()) {
     const dt = clamp(lastGaugeFrameAt ? (now - lastGaugeFrameAt) / 1000 : 1 / 60, 1 / 240, 0.05);
     lastGaugeFrameAt = now;
 
-    const rpmState = smoothGaugeValue(currentRpm, targetRpm, rpmVelocity, dt, RPM_MAX_VELOCITY);
-    currentRpm = rpmState.current;
-    rpmVelocity = rpmState.velocity;
-
-    const speedState = smoothGaugeValue(currentSpeed, targetSpeed, speedVelocity, dt, SPEED_MAX_VELOCITY);
-    currentSpeed = speedState.current;
-    speedVelocity = speedState.velocity;
+    currentRpm = liveGaugeValue(currentRpm, targetRpm, RPM_DIRECT_SNAP);
+    currentSpeed = liveGaugeValue(currentSpeed, targetSpeed, SPEED_DIRECT_SNAP);
 
     const rpmAngle = mapRange(currentRpm, 0, TACH_MAX_RPM, TACH_MIN_DEG, TACH_MAX_DEG);
     const speedAngle = mapRange(currentSpeed, 0, SPEED_MAX, TACH_MIN_DEG, TACH_MAX_DEG);
@@ -3021,6 +3030,7 @@ requestAnimationFrame(renderGauges);
 armStartupFallback();
 loadConfig();
 schedulePortPoll();
+scheduleGaugePoll();
 fetchSupportedSensors();
 fetchScanHistory();
 fetchGarageNotes();

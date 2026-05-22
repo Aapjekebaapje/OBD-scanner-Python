@@ -10,7 +10,19 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-from config import APP_VERSION
+from config import (
+    APP_VERSION,
+    MAX_POLL_INTERVAL,
+    OBD_CONNECT_ATTEMPTS,
+    OBD_CONNECT_RETRY_DELAY,
+    OBD_CONNECT_TIMEOUT,
+    OBD_RECONNECT_FAST_DELAY,
+    OBD_RECONNECT_SLOW_DELAY,
+    POLL_INTERVAL,
+    RPM_POLL_INTERVAL,
+    SCAN_HISTORY_LIMIT,
+    STALE_AFTER_SECONDS,
+)
 from scanner_core.demo_services import (
     build_demo_dtc_snapshot,
     build_demo_freeze_frame,
@@ -108,11 +120,6 @@ def localize_json_response(response):
     return response
 
 DB_PATH = db_path_from_file(__file__)
-POLL_INTERVAL = 0.2
-RPM_POLL_INTERVAL = 0.05
-MAX_POLL_INTERVAL = 0.8
-STALE_AFTER_SECONDS = 0.9
-SCAN_HISTORY_LIMIT = 20
 
 connection = None
 vehicle_data = {}
@@ -522,7 +529,7 @@ def friendly_message(error=None, source=None, port=None):
     if source == "Connect OBD":
         if "could not open port" in message or "filenotfounderror" in message:
             return f"No adapter found on {port_label}. Check the cable and COM port."
-        if "access is denied" in message or "permissionerror" in message:
+        if "access is denied" in message or "permissionerror" in message or "toegang geweigerd" in message:
             return f"{port_label} is busy or blocked by another app. Close other OBD software and try again."
         if "unable to connect" in message or "not connected" in message:
             return "Adapter found, but the car is not responding. Turn ignition on and try again."
@@ -1256,10 +1263,52 @@ def get_recent_scans(limit=SCAN_HISTORY_LIMIT):
     return storage_get_recent_scans(DB_PATH, limit)
 
 
+def close_obd_connection():
+    global connection
+
+    old_connection = connection
+    connection = None
+    if old_connection:
+        try:
+            old_connection.close()
+        except Exception as e:
+            log_error("Close OBD connection", e)
+
+
+def build_connection_port_candidates(configured_port):
+    detected_ports = list_serial_ports()
+    candidates = []
+
+    def add_candidate(port):
+        cleaned = str(port or "").strip()
+        if cleaned and cleaned.upper() not in {item.upper() for item in candidates}:
+            candidates.append(cleaned)
+
+    add_candidate(configured_port)
+    for item in detected_ports:
+        add_candidate(item.get("device"))
+
+    if not candidates:
+        candidates.append(None)
+
+    return candidates
+
+
+def open_obd_candidate(port):
+    kwargs = {
+        "fast": False,
+        "timeout": OBD_CONNECT_TIMEOUT,
+        "check_voltage": False,
+    }
+    return obd.OBD(port, **kwargs) if port else obd.OBD(**kwargs)
+
+
 def connect_obd():
     global connection, query_error_streak, current_live_poll_interval
 
     with connect_lock:
+        port = None
+        last_error = None
         try:
             query_error_streak = 0
             current_live_poll_interval = POLL_INTERVAL
@@ -1271,9 +1320,10 @@ def connect_obd():
                 obd_status["poll_guard_active"] = False
                 obd_status["poll_guard_reason"] = ""
 
+            close_obd_connection()
+
             if demo_mode:
                 preset_name, default_speed = apply_demo_preset_state(get_demo_preset_name(), reset_speed=False)
-                connection = None
                 set_status(
                     True,
                     protocol="Simulator",
@@ -1289,7 +1339,6 @@ def connect_obd():
                 return
 
             if not OBD_AVAILABLE:
-                connection = None
                 set_status(
                     False,
                     error=f"python-obd did not load: {OBD_IMPORT_ERROR}",
@@ -1301,52 +1350,72 @@ def connect_obd():
                 )
                 return
 
-            port = get_configured_port()
+            configured_port = get_configured_port()
+            candidates = build_connection_port_candidates(configured_port)
 
             with state_lock:
-                obd_status["current_port"] = port
+                obd_status["current_port"] = configured_port or (candidates[0] if candidates else None)
                 obd_status["connecting"] = True
                 obd_status["user_message"] = (
-                    f"Connecting to {port}..." if port else "Searching for OBD adapter..."
+                    f"Connecting to {configured_port}..." if configured_port else "Searching for OBD adapter..."
                 )
                 obd_status["last_update"] = time.strftime("%H:%M:%S")
 
             print("Connecting OBD...")
 
-            if port:
-                new_connection = obd.OBD(port, fast=False)
-            else:
-                new_connection = obd.OBD(fast=False)
+            for attempt in range(1, max(1, int(OBD_CONNECT_ATTEMPTS or 1)) + 1):
+                for port in candidates:
+                    try:
+                        with state_lock:
+                            obd_status["current_port"] = port
+                            obd_status["user_message"] = f"Connecting to {port or 'auto-detect'}..."
+                        new_connection = open_obd_candidate(port)
 
-            connection = new_connection
+                        if new_connection and new_connection.is_connected():
+                            connection = new_connection
+                            protocol = new_connection.protocol_name()
+                            set_status(
+                                True,
+                                protocol=protocol,
+                                user_message=f"Connected via {protocol} on {port or 'auto-detect'}.",
+                                connecting=False
+                            )
+                            print("Connected:", protocol, "port:", port or "auto")
+                            with state_lock:
+                                obd_status["connection_hint"] = detect_connection_hint(connection, None)
+                            return
 
-            if new_connection.is_connected():
-                protocol = new_connection.protocol_name()
-                set_status(
-                    True,
-                    protocol=protocol,
-                    user_message=f"Connected via {protocol} on {port or 'auto-detect'}.",
-                    connecting=False
-                )
-                print("Connected:", protocol, "port:", port or "auto")
-            else:
-                set_status(
-                    False,
-                    error="No OBD connection found.",
-                    user_message=friendly_message("No OBD connection found.", source="Connect OBD", port=port),
-                    connecting=False
-                )
-                print("No OBD connection.")
+                        try:
+                            if new_connection:
+                                new_connection.close()
+                        except Exception:
+                            pass
+                        last_error = RuntimeError("No OBD connection found.")
+                    except Exception as exc:
+                        last_error = exc
+                        if "permission" in str(exc).lower() or "toegang geweigerd" in str(exc).lower():
+                            break
 
+                if attempt < OBD_CONNECT_ATTEMPTS:
+                    time.sleep(OBD_CONNECT_RETRY_DELAY)
+
+            error_message = str(last_error or "No OBD connection found.")
+            set_status(
+                False,
+                error=error_message,
+                user_message=friendly_message(error_message, source="Connect OBD", port=port),
+                connecting=False
+            )
             with state_lock:
-                obd_status["connection_hint"] = detect_connection_hint(connection, obd_status.get("error"))
+                obd_status["connection_hint"] = detect_connection_hint(None, error_message)
+            print("No OBD connection.")
 
         except Exception as e:
-            connection = None
+            close_obd_connection()
             set_status(
                 False,
                 error=str(e),
-                user_message=friendly_message(e, source="Connect OBD", port=port if "port" in locals() else None),
+                user_message=friendly_message(e, source="Connect OBD", port=port),
                 connecting=False
             )
             with state_lock:
@@ -1370,6 +1439,45 @@ def set_status(connected, protocol=None, error=None, user_message=None, connecti
             obd_status["last_successful_update"] = obd_status["last_update"]
 
 
+def simplify_fuel_status_text(text):
+    lowered = str(text or "").lower()
+    if "closed loop" in lowered:
+        return "Closed loop"
+    if "open loop" in lowered:
+        if "engine load" in lowered:
+            return "Open loop - engine load"
+        if "deceleration" in lowered or "fuel cut" in lowered:
+            return "Open loop - fuel cut"
+        if "insufficient" in lowered or "temperature" in lowered:
+            return "Open loop - warming up"
+        if "system failure" in lowered or "fault" in lowered:
+            return "Open loop - fault"
+        return "Open loop"
+    return str(text or "").strip()
+
+
+def simplify_obd_value(value):
+    if value is None:
+        return "N/A"
+
+    if isinstance(value, (list, tuple)):
+        cleaned = [simplify_obd_value(item) for item in value if item is not None]
+        cleaned = [item for item in cleaned if item and item != "N/A"]
+        if not cleaned:
+            return "N/A"
+        unique = []
+        for item in cleaned:
+            if item not in unique:
+                unique.append(item)
+        return unique[0] if len(unique) == 1 else " / ".join(unique)
+
+    text = str(value).strip()
+    if not text:
+        return "N/A"
+
+    return simplify_fuel_status_text(text)
+
+
 def safe_query(command):
     if command is None:
         return "N/A"
@@ -1388,7 +1496,7 @@ def safe_query(command):
             return "N/A"
 
         apply_poll_guard_success()
-        return str(response.value)
+        return simplify_obd_value(response.value)
 
     except Exception as e:
         apply_poll_guard_error()
@@ -2028,7 +2136,7 @@ def update_loop():
                 connect_obd()
                 with state_lock:
                     current_error = obd_status.get("error")
-                time.sleep(8 if is_known_port_config_error(current_error) else 3)
+                time.sleep(OBD_RECONNECT_SLOW_DELAY if is_known_port_config_error(current_error) else OBD_RECONNECT_FAST_DELAY)
                 continue
 
             with state_lock:
@@ -2087,30 +2195,40 @@ def update_loop():
 def rpm_update_loop():
     global vin_autoload_attempted
 
+    last_aux_refresh = 0.0
+    aux_interval = max(0.12, RPM_POLL_INTERVAL * 3)
+
     while True:
         try:
             if get_demo_mode_enabled():
                 with state_lock:
                     demo_speed = float(demo_drive_state.get("speed_kmh", 0.0))
                     demo_preset = normalize_demo_preset(demo_drive_state.get("preset", get_demo_preset_name()))
-                demo_rpm = build_demo_vehicle_snapshot(demo_speed, demo_preset).get("rpm", {}).get("value", "N/A")
-                set_vehicle_value("rpm", "RPM", demo_rpm)
-                time.sleep(POLL_INTERVAL)
+                demo_snapshot = build_demo_vehicle_snapshot(demo_speed, demo_preset)
+                set_vehicle_value("rpm", "RPM", demo_snapshot.get("rpm", {}).get("value", "N/A"))
+                set_vehicle_value("speed", "Speed", demo_snapshot.get("speed", {}).get("value", "N/A"))
+                time.sleep(RPM_POLL_INTERVAL)
                 continue
 
             if not connection or not connection.is_connected():
                 vin_autoload_attempted = False
-                time.sleep(0.25)
+                time.sleep(0.08)
                 continue
 
+            # Keep the critical gauges first. Every extra OBD query is serial and can
+            # make RPM/speed feel delayed on slower ELM327 adapters.
             rpm_value = safe_query(RPM_COMMAND)
             set_vehicle_value("rpm", "RPM", rpm_value)
             speed_value = safe_query(SPEED_COMMAND)
             set_vehicle_value("speed", "Speed", speed_value)
-            engine_load_value = safe_query(ENGINE_LOAD_COMMAND)
-            set_vehicle_value("engine_load", "Engine load", engine_load_value)
-            throttle_value = safe_query(THROTTLE_COMMAND)
-            set_vehicle_value("throttle", "Throttle position", throttle_value)
+
+            now = time.time()
+            if now - last_aux_refresh >= aux_interval:
+                engine_load_value = safe_query(ENGINE_LOAD_COMMAND)
+                set_vehicle_value("engine_load", "Engine load", engine_load_value)
+                throttle_value = safe_query(THROTTLE_COMMAND)
+                set_vehicle_value("throttle", "Throttle position", throttle_value)
+                last_aux_refresh = now
 
             with state_lock:
                 vin = vehicle_profile.get("vin", "")
@@ -2128,7 +2246,7 @@ def rpm_update_loop():
             time.sleep(RPM_POLL_INTERVAL)
         except Exception as e:
             log_error("RPM update loop", e)
-            time.sleep(0.25)
+            time.sleep(0.08)
 
 
 @app.route("/")
@@ -2169,6 +2287,21 @@ def api_status():
     })
 
 
+@app.route("/api/gauges")
+def api_gauges():
+    with state_lock:
+        status = dict(obd_status)
+        vehicle = {
+            "rpm": dict(vehicle_data.get("rpm", {"label": "RPM", "value": "N/A"})),
+            "speed": dict(vehicle_data.get("speed", {"label": "Speed", "value": "N/A"})),
+        }
+    return jsonify({
+        "connected": bool(status.get("connected")),
+        "demo_mode": bool(status.get("demo_mode")),
+        "vehicle": vehicle,
+    })
+
+
 @app.route("/api/connection/test", methods=["POST"])
 def api_connection_test():
     if get_demo_mode_enabled():
@@ -2200,7 +2333,13 @@ def api_connection_test():
             ]
         })
 
-    result = run_connection_test(obd, get_configured_port())
+    result = run_connection_test(
+        obd,
+        get_configured_port(),
+        timeout=OBD_CONNECT_TIMEOUT,
+        attempts=OBD_CONNECT_ATTEMPTS,
+        retry_delay=OBD_CONNECT_RETRY_DELAY,
+    )
     return jsonify(result), (200 if result.get("success") else 400)
 
 
