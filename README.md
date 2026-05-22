@@ -4,7 +4,7 @@ A Python and Flask based OBD-II diagnostic dashboard for reading live ECU data, 
 
 The project includes a tablet-style web interface, English and Dutch language support, local scan history, VIN/license plate workflows and a built-in demo mode for testing without a car connected.
 
-Current version: `v0.4.0`
+Current version: `v0.4.1`
 
 ## Features
 
@@ -32,6 +32,8 @@ Current version: `v0.4.0`
 - Garage note delete action with confirmation popup
 - Split garage note validation, filtering and HTML export logic into `scanner_core/garage_services.py`
 - Extra UI animations for page changes, popups, actions, form feedback and status text
+- Reworked page layouts for Live Data, Fault Codes, Reports, Service, Garage, History, Sensors, System, Vehicle and Purchase Checklist views
+- Smooth motion layer for dropdowns, details panels, list rows, graph cards, gauges, buttons, inputs and confirmation dialogs
 - USB / COM port selection
 - Connection test and adapter status view
 - Connection quality view for USB adapter, OBD port, ECU and live data state
@@ -221,7 +223,7 @@ Saved garage notes can be edited later. Editing fills the note form with the exi
 Refresh timings and history limits can be adjusted in `config.py`.
 
 ```python
-APP_VERSION = "v0.4.0"
+APP_VERSION = "v0.4.1"
 POLL_INTERVAL = 0.1
 RPM_POLL_INTERVAL = 0.05
 OBD_CONNECT_TIMEOUT = 1.0

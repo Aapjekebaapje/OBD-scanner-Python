@@ -82,7 +82,6 @@ function setText(id, value) {
     const next = String(value);
     if (element.textContent !== next) {
         element.textContent = next;
-        pulseElement(element, "is-updating");
     }
 }
 
@@ -229,7 +228,7 @@ function normalizePlateCandidate(value) {
     return compact;
 }
 
-function pulseElement(element, className = "is-updating") {
+function pulseElement(element, className = "pulse") {
     if (!element) return;
     element.classList.remove(className);
     void element.offsetWidth;
@@ -2494,14 +2493,20 @@ function openConfirmDialog(title, message) {
     titleElement.innerText = title;
     messageElement.innerText = message;
     overlay.hidden = false;
+    overlay.classList.remove("is-closing");
     overlay.classList.add("is-open");
 
     return new Promise((resolve) => {
+        let settled = false;
         const cleanup = (result) => {
+            if (settled) return;
+            settled = true;
             overlay.classList.remove("is-open");
+            overlay.classList.add("is-closing");
             window.setTimeout(() => {
+                overlay.classList.remove("is-closing");
                 overlay.hidden = true;
-            }, 160);
+            }, 220);
             yesButton.removeEventListener("click", handleYes);
             noButton.removeEventListener("click", handleNo);
             overlay.removeEventListener("click", handleBackdrop);

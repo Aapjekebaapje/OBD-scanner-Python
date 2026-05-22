@@ -2,6 +2,419 @@
     box-sizing: border-box;
 }
 
+/* v0.4.1 motion and page layout refresh.
+   Dashboard HTML stays unchanged; these rules reshape the individual pages. */
+@keyframes pageLayerIn {
+    from {
+        opacity: 0;
+        transform: translateY(22px) scale(0.982);
+        filter: blur(3px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+}
+
+@keyframes pageLayerOut {
+    from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        filter: blur(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-14px) scale(0.99);
+        filter: blur(2px);
+    }
+}
+
+@keyframes listCascadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(16px) scale(0.985);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes glowSweep {
+    0% {
+        transform: translateX(-120%);
+    }
+    100% {
+        transform: translateX(160%);
+    }
+}
+
+@keyframes dropdownReveal {
+    from {
+        opacity: 0;
+        transform: translateY(-8px) scale(0.985);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes fieldAttention {
+    0% {
+        transform: translateX(0);
+    }
+    25% {
+        transform: translateX(-3px);
+    }
+    55% {
+        transform: translateX(3px);
+    }
+    100% {
+        transform: translateX(0);
+    }
+}
+
+.page-screen {
+    transform-origin: 50% 18px;
+}
+
+.page-screen.is-active {
+    animation: pageLayerIn 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.page-screen.is-leaving {
+    animation: pageLayerOut 220ms ease both;
+    pointer-events: none;
+}
+
+.page-screen:not(.page-home) > .panel,
+.page-screen:not(.page-home) > div,
+.page-screen:not(.page-home) > article {
+    animation: listCascadeIn 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.page-screen .panel {
+    position: relative;
+    overflow: hidden;
+}
+
+.page-screen .panel::after,
+.vehicle-card::after,
+.graph-card::after,
+.code-group-panel::after {
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.42), transparent);
+    content: "";
+    height: 100%;
+    left: 0;
+    opacity: 0;
+    pointer-events: none;
+    position: absolute;
+    top: 0;
+    transform: translateX(-120%);
+    width: 44%;
+}
+
+.page-screen.is-active .panel:hover::after,
+.page-screen.is-active .vehicle-card:hover::after,
+.page-screen.is-active .graph-card:hover::after,
+.page-screen.is-active .code-group-panel:hover::after {
+    animation: glowSweep 820ms ease;
+    opacity: 1;
+}
+
+.panel,
+.vehicle-card,
+.graph-card,
+.code-group-panel,
+.history-row,
+.support-row,
+.sensor-row,
+.detail-row,
+.quality-pill,
+.quick-metric,
+.snapshot-grid div,
+.port-chip,
+.language-option,
+.demo-preset-button,
+.poll-profile-button {
+    will-change: transform, opacity;
+}
+
+.history-row,
+.support-row,
+.sensor-row,
+.error-row,
+.code,
+.checklist-item,
+.detail-row,
+.spec-card,
+.vehicle-card,
+.graph-card,
+.quality-pill,
+.quick-metric,
+.snapshot-grid div {
+    animation: listCascadeIn 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.secondary-action,
+.danger-action,
+.primary-toggle,
+.module-button,
+.compact-action,
+.language-option,
+.demo-preset-button,
+.poll-profile-button,
+.port-dropdown-trigger,
+.icon-action {
+    transform-origin: center;
+}
+
+.secondary-action:hover,
+.danger-action:hover,
+.primary-toggle:hover,
+.module-button:hover,
+.compact-action:hover,
+.language-option:hover,
+.demo-preset-button:hover,
+.poll-profile-button:hover,
+.port-dropdown-trigger:hover,
+.icon-action:hover {
+    box-shadow: 0 14px 28px rgba(24, 53, 88, 0.14);
+}
+
+.secondary-action:focus-visible,
+.danger-action:focus-visible,
+.primary-toggle:focus-visible,
+.module-button:focus-visible,
+.compact-action:focus-visible,
+.language-option:focus-visible,
+.demo-preset-button:focus-visible,
+.poll-profile-button:focus-visible,
+.port-dropdown-trigger:focus-visible,
+.icon-action:focus-visible {
+    box-shadow: 0 0 0 4px rgba(13, 110, 253, 0.14), 0 16px 32px rgba(24, 53, 88, 0.14);
+    outline: none;
+}
+
+.input-error {
+    animation: fieldAttention 260ms ease;
+}
+
+.port-dropdown-menu:not([hidden]),
+.system-language-dropdown[open] .system-language-menu,
+details[open] > :not(summary) {
+    animation: dropdownReveal 190ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.simple-summary-panel:not([hidden]) {
+    animation: popIn 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.confirm-overlay {
+    backdrop-filter: blur(8px);
+    transition: opacity 180ms ease, backdrop-filter 180ms ease;
+}
+
+.confirm-dialog {
+    transform-origin: 50% 35%;
+}
+
+.startup-panel,
+.confirm-dialog,
+.port-dropdown-menu,
+.system-language-menu {
+    will-change: transform, opacity;
+}
+
+.tach-face,
+.score-ring,
+.health-status-badge,
+.status-pill,
+.support-badge,
+.live-pill {
+    transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease, border-color 180ms ease, color 180ms ease;
+}
+
+.tach-face:hover,
+.score-ring:hover {
+    transform: translateY(-2px) scale(1.006);
+}
+
+.status-pill:hover,
+.support-badge:hover,
+.live-pill:hover,
+.health-status-badge:hover {
+    transform: translateY(-1px);
+}
+
+.sensor-table,
+.history-list,
+.sensor-support-list,
+.codes,
+.error-log {
+    scroll-behavior: smooth;
+}
+
+.graph-card canvas {
+    transition: filter 180ms ease, opacity 180ms ease, transform 180ms ease;
+}
+
+.graph-card:hover canvas {
+    filter: drop-shadow(0 10px 18px rgba(13, 110, 253, 0.12));
+    transform: translateY(-1px);
+}
+
+.page-live {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(360px, 0.86fr) minmax(420px, 1.14fr);
+}
+
+.page-live .live-summary-layout,
+.page-live .live-gauge-layout,
+.page-live .graph-panel,
+.page-live .stream-panel {
+    min-width: 0;
+}
+
+.page-live .live-summary-layout {
+    align-content: start;
+    grid-column: 1;
+    grid-template-columns: 1fr;
+}
+
+.page-live .live-gauge-layout {
+    grid-column: 2;
+    grid-row: 1;
+}
+
+.page-live .graph-panel {
+    grid-column: 1 / -1;
+}
+
+.page-live .stream-panel {
+    grid-column: 1 / -1;
+}
+
+.page-codes {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+}
+
+.page-codes > .panel:first-child {
+    grid-column: 1 / -1;
+    min-height: 0;
+}
+
+.page-codes .freeze-frame-panel {
+    grid-column: 1 / -1;
+    min-height: 220px;
+}
+
+.page-report .report-layout {
+    align-items: start;
+    grid-template-columns: minmax(420px, 1.08fr) minmax(320px, 0.92fr);
+}
+
+.page-report > .panel {
+    margin-top: 18px;
+}
+
+.page-service .service-layout {
+    align-items: start;
+    grid-template-columns: minmax(300px, 0.8fr) minmax(420px, 1.18fr) minmax(300px, 0.88fr);
+}
+
+.page-service .service-config-panel {
+    grid-row: span 2;
+}
+
+.page-service .warning-panel {
+    grid-column: 1 / -1;
+}
+
+.page-garage .garage-layout {
+    align-items: start;
+    grid-template-columns: minmax(320px, 0.72fr) minmax(520px, 1.28fr);
+}
+
+.page-history {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: minmax(360px, 0.74fr) minmax(460px, 1.26fr);
+}
+
+.page-history .history-detail-panel {
+    margin-top: 0;
+}
+
+.page-sensors .sensor-support-layout {
+    align-items: start;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.page-system .system-console-layout {
+    align-items: stretch;
+    grid-template-columns: minmax(320px, 0.8fr) minmax(420px, 1.25fr) minmax(300px, 0.75fr);
+}
+
+.page-vehicle .vehicle-layout {
+    align-items: start;
+    grid-template-columns: minmax(520px, 1.12fr) minmax(380px, 0.88fr);
+}
+
+.page-purchase-checklist .purchase-layout {
+    align-items: start;
+    grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+}
+
+.page-purchase-checklist .purchase-side-stack {
+    display: grid;
+    gap: 16px;
+}
+
+@media (max-width: 1200px) {
+    .page-live,
+    .page-codes,
+    .page-history,
+    .page-report .report-layout,
+    .page-service .service-layout,
+    .page-garage .garage-layout,
+    .page-sensors .sensor-support-layout,
+    .page-system .system-console-layout,
+    .page-vehicle .vehicle-layout,
+    .page-purchase-checklist .purchase-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .page-live .live-summary-layout,
+    .page-live .live-gauge-layout,
+    .page-live .graph-panel,
+    .page-live .stream-panel,
+    .page-service .warning-panel,
+    .page-codes > .panel:first-child,
+    .page-codes .freeze-frame-panel {
+        grid-column: auto;
+        grid-row: auto;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.001ms !important;
+    }
+}
+
 :root {
     --bg: #eef2f6;
     --tablet-shell: #f7f9fc;
@@ -132,14 +545,23 @@
     }
 }
 
-@keyframes feedbackFlash {
-    0% {
-        background: rgba(13, 110, 253, 0.1);
-        transform: translateY(-1px);
+@keyframes overlayFadeOut {
+    from {
+        opacity: 1;
     }
-    100% {
-        background: transparent;
-        transform: translateY(0);
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes popOut {
+    from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(10px) scale(0.965);
     }
 }
 
@@ -2345,10 +2767,6 @@ select:focus {
     margin: -4px 0 14px;
 }
 
-.is-updating {
-    animation: feedbackFlash 360ms ease;
-}
-
 .simple-summary-panel[hidden] {
     display: none;
 }
@@ -2964,6 +3382,10 @@ select:focus {
     animation: overlayFadeIn 180ms ease both;
 }
 
+.confirm-overlay.is-closing {
+    animation: overlayFadeOut 220ms ease both;
+}
+
 .confirm-overlay[hidden] {
     display: none !important;
 }
@@ -2980,6 +3402,10 @@ select:focus {
 
 .confirm-overlay.is-open .confirm-dialog {
     animation: popIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.confirm-overlay.is-closing .confirm-dialog {
+    animation: popOut 200ms ease both;
 }
 
 .confirm-dialog h2,
@@ -3679,10 +4105,6 @@ select:focus {
     opacity: 0.8;
 }
 
-.is-updating {
-    animation: softPulse 320ms ease;
-}
-
 @media (max-width: 1380px) {
     .tablet-screen {
         grid-template-columns: 270px minmax(0, 1fr);
@@ -4191,5 +4613,145 @@ select:focus {
         font-size: 18px;
         margin-left: 0;
         text-align: left;
+    }
+}
+
+/* Fault code page readability */
+.page-codes > .panel:first-child {
+    display: grid;
+    grid-template-rows: auto auto auto auto minmax(0, 1fr);
+    max-height: calc(100vh - 164px);
+    min-height: 0;
+}
+
+.page-codes .panel-heading {
+    align-items: flex-start;
+    gap: 18px;
+}
+
+.page-codes .status-pill-row {
+    align-items: center;
+    display: flex;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.page-codes .inline-action {
+    min-height: 48px;
+    min-width: 118px;
+    padding: 12px 17px;
+    width: auto;
+}
+
+.page-codes .standard-obd-note,
+.page-codes #codes-status-message,
+.page-codes #clear-result-codes {
+    line-height: 1.45;
+    margin-bottom: 10px;
+    max-width: 980px;
+}
+
+.page-codes .code-layout {
+    align-items: stretch;
+    gap: 18px;
+    grid-template-columns: repeat(3, minmax(250px, 1fr));
+    min-height: 0;
+    overflow: hidden;
+}
+
+.page-codes .code-group-panel {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    max-height: 520px;
+    min-height: 300px;
+    overflow: hidden;
+}
+
+.page-codes .codes {
+    align-content: start;
+    display: grid;
+    gap: 12px;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 6px;
+}
+
+.page-codes .codes::-webkit-scrollbar {
+    width: 8px;
+}
+
+.page-codes .codes::-webkit-scrollbar-track {
+    background: rgba(214, 226, 241, 0.55);
+    border-radius: 999px;
+}
+
+.page-codes .codes::-webkit-scrollbar-thumb {
+    background: rgba(93, 115, 142, 0.45);
+    border-radius: 999px;
+}
+
+.page-codes .code {
+    border-radius: 16px;
+    font-size: 14px;
+    line-height: 1.35;
+    padding: 14px 15px;
+}
+
+.page-codes .code strong {
+    font-size: 18px;
+}
+
+.page-codes .code p {
+    margin-top: 5px;
+}
+
+.page-codes .code-meta {
+    font-size: 11px;
+    letter-spacing: 0.02em;
+}
+
+.page-codes .cause-list {
+    margin-top: 9px;
+}
+
+.page-codes .cause-list li {
+    margin-top: 3px;
+}
+
+@media (max-width: 1500px) {
+    .page-codes > .panel:first-child {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .page-codes .code-layout {
+        grid-template-columns: 1fr;
+        overflow: visible;
+    }
+
+    .page-codes .code-group-panel {
+        max-height: none;
+        min-height: 0;
+    }
+
+    .page-codes .codes {
+        max-height: none;
+        overflow: visible;
+        padding-right: 0;
+    }
+}
+
+@media (max-width: 720px) {
+    .page-codes .panel-heading,
+    .page-codes .status-pill-row {
+        align-items: stretch;
+        flex-direction: column;
+        justify-content: flex-start;
+    }
+
+    .page-codes .inline-action {
+        width: 100%;
     }
 }

@@ -137,6 +137,7 @@ freeze_frame_data = {
     "available": False,
     "values": {},
 }
+demo_codes_cleared = False
 
 vehicle_profile = {
     "vin": "",
@@ -487,6 +488,21 @@ def reset_dtc_state(message="No fault code scan run yet."):
             "available": False,
             "values": {},
         }
+
+
+def build_demo_readiness_for_current_clear_state(preset, cleared=None):
+    readiness = build_demo_readiness(preset)
+
+    if cleared is None:
+        with state_lock:
+            cleared = bool(demo_codes_cleared)
+
+    if cleared:
+        readiness = dict(readiness)
+        readiness["mil"] = False
+        readiness["dtc_count"] = 0
+
+    return readiness
 
 
 def friendly_message(error=None, source=None, port=None):
@@ -1879,7 +1895,18 @@ def scan_dtc_codes():
     if get_demo_mode_enabled():
         with state_lock:
             demo_preset = normalize_demo_preset(demo_drive_state.get("preset", get_demo_preset_name()))
-        demo_dtc = build_demo_dtc_snapshot(demo_preset)
+            cleared = bool(demo_codes_cleared)
+
+        demo_dtc = (
+            {
+                "stored": [],
+                "pending": [],
+                "permanent": [],
+                "message": "Demo fault codes are cleared. Change demo preset to load demo faults again.",
+            }
+            if cleared
+            else build_demo_dtc_snapshot(demo_preset)
+        )
         new_dtc_data = {
             "stored": list(demo_dtc["stored"]),
             "pending": list(demo_dtc["pending"]),
@@ -1887,7 +1914,7 @@ def scan_dtc_codes():
         }
         with state_lock:
             dtc_data = new_dtc_data
-            freeze_frame_data = build_demo_freeze_frame(demo_preset)
+            freeze_frame_data = {"available": False, "values": {}} if cleared else build_demo_freeze_frame(demo_preset)
             dtc_status["has_scan"] = True
             dtc_status["scanning"] = False
             dtc_status["last_scan"] = now_time()
@@ -1957,6 +1984,7 @@ def update_loop():
                 with state_lock:
                     demo_speed = float(demo_drive_state.get("speed_kmh", 0.0))
                     demo_preset = normalize_demo_preset(demo_drive_state.get("preset", get_demo_preset_name()))
+                    demo_cleared = bool(demo_codes_cleared)
                 demo_snapshot = build_demo_vehicle_snapshot(demo_speed, demo_preset)
                 now = time.time()
                 with state_lock:
@@ -1965,7 +1993,7 @@ def update_loop():
                         key: build_live_item(previous.get(key), item["label"], item["value"], now)
                         for key, item in demo_snapshot.items()
                     }
-                    readiness_data = build_demo_readiness(demo_preset)
+                    readiness_data = build_demo_readiness_for_current_clear_state(demo_preset, demo_cleared)
                     obd_status["connected"] = True
                     obd_status["protocol"] = "Simulator"
                     obd_status["error"] = None
@@ -2222,11 +2250,7 @@ def api_codes_scan():
 
 @app.route("/api/clear", methods=["POST"])
 def clear_codes():
-    if not connection or not connection.is_connected():
-        return jsonify({
-            "success": False,
-            "message": "No OBD connection."
-        }), 400
+    global dtc_data, freeze_frame_data, readiness_data, demo_codes_cleared
 
     with state_lock:
         safe_mode_enabled = obd_status["safe_mode"]
@@ -2244,6 +2268,35 @@ def clear_codes():
         return jsonify({
             "success": False,
             "message": "Confirmation is missing."
+        }), 400
+
+    if get_demo_mode_enabled():
+        with state_lock:
+            demo_preset = normalize_demo_preset(demo_drive_state.get("preset", get_demo_preset_name()))
+            demo_codes_cleared = True
+            dtc_data = {
+                "stored": [],
+                "pending": [],
+                "permanent": [],
+            }
+            freeze_frame_data = {
+                "available": False,
+                "values": {},
+            }
+            readiness_data = build_demo_readiness_for_current_clear_state(demo_preset, True)
+            dtc_status["has_scan"] = True
+            dtc_status["scanning"] = False
+            dtc_status["last_scan"] = now_time()
+            dtc_status["message"] = "Demo fault codes cleared."
+        return jsonify({
+            "success": True,
+            "message": "Demo fault codes cleared. Change demo preset to load demo faults again."
+        })
+
+    if not connection or not connection.is_connected():
+        return jsonify({
+            "success": False,
+            "message": "No OBD connection."
         }), 400
 
     try:
@@ -2420,7 +2473,7 @@ def supported_commands():
 
 @app.route("/api/demo-mode", methods=["POST"])
 def api_demo_mode():
-    global connection, vehicle_data, query_error_streak, current_live_poll_interval
+    global connection, vehicle_data, query_error_streak, current_live_poll_interval, demo_codes_cleared
 
     payload = request.get_json(silent=True) or {}
     enabled = bool(payload.get("enabled", False))
@@ -2443,6 +2496,7 @@ def api_demo_mode():
 
     with state_lock:
         vehicle_data = {}
+        demo_codes_cleared = False
         obd_status["demo_mode"] = enabled
         obd_status["current_port"] = "Demo mode" if enabled else get_configured_port()
 
@@ -2465,6 +2519,8 @@ def api_demo_mode():
 
 @app.route("/api/demo-mode/preset", methods=["POST"])
 def api_demo_preset():
+    global demo_codes_cleared
+
     payload = request.get_json(silent=True) or {}
     requested_preset = payload.get("preset", "idle")
     preset_name = normalize_demo_preset(requested_preset)
@@ -2478,6 +2534,7 @@ def api_demo_preset():
     preset_name, speed = apply_demo_preset_state(preset_name, reset_speed=True)
 
     with state_lock:
+        demo_codes_cleared = False
         if obd_status.get("demo_mode"):
             obd_status["last_update"] = now_time()
             obd_status["user_message"] = f"Demo preset switched to {get_demo_preset(preset_name)[1]['label']}."

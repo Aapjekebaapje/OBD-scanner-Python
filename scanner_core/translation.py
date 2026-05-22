@@ -253,7 +253,7 @@ BASE_TRANSLATIONS = {
     },
     "meta": {
         "html_lang": "en",
-        "title": "OBD Scanner v0.2.0",
+        "title": "OBD Scanner v0.4.1",
     },
     "partials": {
         "confirm": {
@@ -265,7 +265,7 @@ BASE_TRANSLATIONS = {
         },
         "sidebar": {
             "brand_eyebrow": "Diagnostic Tablet",
-            "brand_name": "OBD Scanner v0.2.0",
+            "brand_name": "OBD Scanner v0.4.1",
             "nav_home": "Dashboard",
             "nav_home_small": "Back to tablet home",
             "connection_eyebrow": "Connection Status",
@@ -280,7 +280,7 @@ BASE_TRANSLATIONS = {
         },
         "startup": {
             "eyebrow": "Boot Sequence",
-            "title": "OBD Scanner v0.2.0",
+            "title": "OBD Scanner v0.4.1",
             "message": "Initializing diagnostic tablet...",
         },
         "topbar": {
@@ -957,7 +957,7 @@ TRANSLATIONS = {
                 "yes": "Ja",
             },
             "sidebar": {
-                "brand_eyebrow": "Diagnose Tablet v0.2.0",
+                "brand_eyebrow": "Diagnose Tablet v0.4.1",
                 "nav_home_small": "Terug naar het tablet-overzicht",
                 "connection_eyebrow": "Verbindingsstatus",
                 "status_text": "Verbinden...",
