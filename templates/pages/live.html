@@ -43,6 +43,7 @@
                         <h2>{{ i18n.live.connection_quality_title }}</h2>
                     </div>
                 </div>
+                <div class="status-pill-row dashboard-indicators"><span id="obd-bus-mode" class="status-pill status-info">Bus: --</span><span id="offline-status-pill" class="status-pill status-info">Online check: --</span></div>
                 <div class="quality-grid">
                 <div id="quality-adapter" class="quality-pill is-offline">{{ i18n.js.quality_adapter }}</div>
                 <div id="quality-port" class="quality-pill is-offline">{{ i18n.js.quality_port }}</div>
@@ -143,10 +144,14 @@
     </div>
 
     <article class="panel graph-panel">
-        <div class="panel-heading">
+        <div class="panel-heading graph-record-heading">
             <div>
                 <p class="eyebrow">{{ i18n.live.live_trends_eyebrow }}</p>
                 <h2>{{ i18n.live.live_trends_title }}</h2>
+            </div>
+            <div class="recording-actions">
+                <button id="record-graphs-button" class="secondary-action inline-action" type="button">Start Recording</button>
+                <span id="recording-status" class="recording-status">No recording active</span>
             </div>
         </div>
         <div class="graph-grid">
@@ -187,3 +192,4 @@
         <div class="sensor-table" id="live-grid"></div>
     </article>
 </section>
+

@@ -7,8 +7,53 @@
     <title>OBD Scanner {{ app_version }}</title>
     <link rel="stylesheet" href="/static/style.css?v={{ app_version }}">
 </head>
-<body>
+<body data-dashboard-page="true">
 {% include "partials/startup_overlay.html" %}
+
+<div id="update-notification" class="update-notification update-flyin" hidden>
+    <div>
+        <strong id="update-title">Update available</strong>
+        <p id="update-message">A new version is available.</p>
+    </div>
+    <a id="update-link" class="secondary-action compact-action" href="#" target="_blank" rel="noopener">Open GitHub</a>
+    <button id="update-close" class="update-close" type="button" aria-label="Close update notification">x</button>
+</div>
+
+
+<div id="offline-indicator" class="offline-indicator" hidden>
+    <strong>Offline mode</strong>
+    <span>Update check is not available. Live local scanning keeps working.</span>
+</div>
+
+<div id="setup-modal" class="setup-modal" hidden>
+    <div class="setup-card">
+        <p class="eyebrow">First dashboard setup</p>
+        <h2>Choose your storage mode</h2>
+        <p class="panel-copy">This is saved in <strong>dashboard_setup.json</strong>, not in the database.</p>
+        <div class="setup-options">
+            <label class="setup-option"><input type="radio" name="setup-storage" value="sqlite" checked> <span><strong>SQLite</strong><small>Local .db file on this device</small></span></label>
+            <label class="setup-option"><input type="radio" name="setup-storage" value="mysql"> <span><strong>MySQL</strong><small>External database for later multi-device/server use</small></span></label>
+        </div>
+        <div id="setup-mysql-fields" class="setup-mysql-fields" hidden>
+            <input id="setup-mysql-host" type="text" placeholder="MySQL host">
+            <input id="setup-mysql-database" type="text" placeholder="Database name">
+            <input id="setup-mysql-user" type="text" placeholder="User">
+        </div>
+        <button id="setup-save-button" class="secondary-action" type="button">Save setup</button>
+    </div>
+</div>
+
+<div id="export-modal" class="setup-modal compact-modal" hidden>
+    <div class="setup-card">
+        <p class="eyebrow">Export scan</p>
+        <h2>Choose export format</h2>
+        <div class="setup-actions">
+            <button id="export-html-button" class="secondary-action" type="button">HTML report</button>
+            <button id="export-csv-button" class="secondary-action" type="button">CSV spreadsheet</button>
+            <button id="export-cancel-button" class="secondary-action" type="button">Cancel</button>
+        </div>
+    </div>
+</div>
 
 <div class="tablet-frame">
     <div class="tablet-bezel">
@@ -37,6 +82,7 @@
 {% include "partials/confirm_dialog.html" %}
 
 <script>
+window.APP_VERSION = {{ app_version | tojson }};
 window.APP_LANG = {{ lang | tojson }};
 window.APP_I18N = {{ js_translations | tojson }};
 </script>

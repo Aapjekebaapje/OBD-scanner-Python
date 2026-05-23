@@ -254,7 +254,7 @@ BASE_TRANSLATIONS = {
     },
     "meta": {
         "html_lang": "en",
-        "title": "OBD Scanner v0.4.3",
+        "title": "OBD Scanner v0.5.0",
     },
     "partials": {
         "confirm": {
@@ -266,7 +266,7 @@ BASE_TRANSLATIONS = {
         },
         "sidebar": {
             "brand_eyebrow": "Diagnostic Tablet",
-            "brand_name": "OBD Scanner v0.4.3",
+            "brand_name": "OBD Scanner v0.5.0",
             "nav_home": "Dashboard",
             "nav_home_small": "Back to tablet home",
             "connection_eyebrow": "Connection Status",
@@ -281,7 +281,7 @@ BASE_TRANSLATIONS = {
         },
         "startup": {
             "eyebrow": "Boot Sequence",
-            "title": "OBD Scanner v0.4.3",
+            "title": "OBD Scanner v0.5.0",
             "message": "Initializing diagnostic tablet...",
         },
         "topbar": {
@@ -439,12 +439,12 @@ BASE_TRANSLATIONS = {
         "filter_plate": "Filter plate",
         "filter": "Filter",
         "clear_filter": "Clear",
-        "export_html": "Export HTML",
+        "export_html": "Export",
     },
     "report": {
         "eyebrow": "Vehicle Report",
         "title": "Pre-purchase summary",
-        "export": "Export HTML",
+        "export": "Export",
         "snapshot": "Save Snapshot",
         "simple_mode": "Simple Mode",
         "action_result": "No report action yet.",
@@ -958,7 +958,7 @@ TRANSLATIONS = {
                 "yes": "Ja",
             },
             "sidebar": {
-                "brand_eyebrow": "Diagnose Tablet v0.4.3",
+                "brand_eyebrow": "Diagnose Tablet v0.5.0",
                 "nav_home_small": "Terug naar het tablet-overzicht",
                 "connection_eyebrow": "Verbindingsstatus",
                 "status_text": "Verbinden...",
@@ -1084,12 +1084,12 @@ TRANSLATIONS = {
             "filter_plate": "Filter kenteken",
             "filter": "Filter",
             "clear_filter": "Wissen",
-            "export_html": "Exporteer HTML",
+            "export_html": "Exporteer",
         },
         "report": {
             "eyebrow": "Voertuigrapport",
             "title": "Aankoopoverzicht",
-            "export": "Exporteer HTML",
+            "export": "Exporteer",
             "snapshot": "Snapshot Opslaan",
             "simple_mode": "Simple Mode",
             "action_result": "Nog geen rapportactie uitgevoerd.",

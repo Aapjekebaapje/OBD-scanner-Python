@@ -4,7 +4,7 @@ A Python and Flask based OBD-II diagnostic dashboard for reading live ECU data, 
 
 The project includes a tablet-style web interface, English and Dutch language support, local scan history, VIN/license plate workflows and a built-in demo mode for testing without a car connected.
 
-Current version: `v0.4.3`
+Current version: `v0.5.0`
 
 ## Features
 
@@ -15,6 +15,7 @@ Current version: `v0.4.3`
 - Selectable polling profiles: Performance, Balanced and Safe
 - Coolant temperature, ECU voltage, engine load, fuel trims and other live sensor values
 - Live mini charts for coolant temperature, ECU voltage, engine load and throttle position
+- Graph recording with HTML playback export for RPM, speed, coolant, voltage, engine load and throttle
 - Stored, pending and permanent diagnostic trouble code views
 - Fault code clearing with SAFE mode protection
 - Readiness monitor overview
@@ -45,6 +46,7 @@ Current version: `v0.4.3`
 - Battery and charging voltage check
 - Optional simple summary mode
 - Reset UI cache action for clearing local browser dashboard state
+- Automatic GitHub update check with dashboard notification when a newer version is available
 - Supported PID overview
 - English and Dutch interface support
 
@@ -223,7 +225,7 @@ Saved garage notes can be edited later. Editing fills the note form with the exi
 Refresh timings and history limits can be adjusted in `config.py`.
 
 ```python
-APP_VERSION = "v0.4.3"
+APP_VERSION = "v0.5.0"
 POLL_INTERVAL = 0.1
 RPM_POLL_INTERVAL = 0.05
 OBD_CONNECT_TIMEOUT = 1.0

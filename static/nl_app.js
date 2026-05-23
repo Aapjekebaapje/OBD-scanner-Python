@@ -1,6 +1,6 @@
 /* Made by The Syndicate Development */
 const CONNECTED_POLL_MS = 100;
-const GAUGE_POLL_MS = 50;
+const GAUGE_POLL_MS = 35;
 const DISCONNECTED_POLL_MS = 1200;
 const TACH_MIN_DEG = 135;
 const TACH_MAX_DEG = 405;
@@ -44,6 +44,9 @@ let codeScanPending = false;
 let lastDtcStatus = {};
 let lastConnectionQualitySignature = "";
 let startupFallbackTimer = null;
+let graphRecordingActive = false;
+let graphRecordingStartedAt = 0;
+let graphRecordingSamples = [];
 let lastReadinessSignature = "";
 let lastFreezeFrameSignature = "";
 let lastReportSignature = "";
@@ -62,14 +65,18 @@ const coolantChartPoints = [];
 const voltageChartPoints = [];
 const engineLoadChartPoints = [];
 const throttleChartPoints = [];
+const o2ChartPoints = [];
 const CHART_POINT_LIMIT = 60;
 const VEHICLE_LOOKUP_HISTORY_KEY = "obd_vehicle_lookup_history";
 const VEHICLE_LOOKUP_HISTORY_LIMIT = 10;
 const POLL_PROFILE_STORAGE_KEY = "obd_poll_profile";
 const demoPresetMeta = new Map();
 let lastChartSampleAt = 0;
-const RPM_DIRECT_SNAP = 35;
-const SPEED_DIRECT_SNAP = 1;
+const RPM_DIRECT_SNAP = 0.4;
+const SPEED_DIRECT_SNAP = 0.05;
+const RPM_SMOOTH_RESPONSE = 18;
+const SPEED_SMOOTH_RESPONSE = 16;
+let updateCheckOffline = false;
 
 function byId(id) {
     return document.getElementById(id);
@@ -132,6 +139,36 @@ function isUnavailableValue(value) {
 
 function displayLiveValue(value, fallback = tr("quick_no_data", "No Data")) {
     return isUnavailableValue(value) ? fallback : String(value);
+}
+
+function setOfflineIndicator(active) {
+    updateCheckOffline = Boolean(active);
+    const box = byId("offline-indicator");
+    const pill = byId("offline-status-pill");
+    if (box) box.hidden = !updateCheckOffline;
+    if (pill) {
+        pill.textContent = updateCheckOffline ? "Offline mode: update check unavailable" : "Online check: OK";
+        pill.className = updateCheckOffline ? "status-pill is-warning" : "status-pill status-info";
+    }
+}
+
+function updateBusModeIndicator(payload) {
+    const pill = byId("obd-bus-mode");
+    if (!pill) return;
+    const mode = payload?.obd_bus_mode?.mode || "Unknown";
+    const confidence = payload?.obd_bus_mode?.confidence || "low";
+    pill.textContent = `Bus: ${mode} (${confidence})`;
+    pill.title = payload?.obd_bus_mode?.detail || "";
+}
+
+function applyWarningThresholds(payload) {
+    const thresholds = payload?.runtime_state?.warning_thresholds || {};
+    const coolantLimit = Number(thresholds.coolant_temp_c ?? 100);
+    const coolant = numberFromValue(payload?.vehicle?.coolant_temp?.value);
+    const target = byId("quick-coolant");
+    if (target) {
+        target.classList.toggle("is-warning", Number.isFinite(coolant) && coolant >= coolantLimit);
+    }
 }
 
 function formatLiveValue(value, sensorKey, fallback = tr("quick_no_data", "No Data")) {
@@ -527,6 +564,8 @@ async function fetchFullData() {
     limitedMode = Boolean(status.limited_mode);
 
     updateStatus(status, sessionState);
+    updateBusModeIndicator(payload);
+    applyWarningThresholds(displayPayload);
     updateConnectionQuality(displayPayload.connection_quality || payload.connection_quality || {});
     updateSafeModeUi();
     updateLimitedModeUi();
@@ -1035,15 +1074,19 @@ function updateGaugeTargets(vehicle) {
     targetSpeed = nextSpeed;
 }
 
-function liveGaugeValue(current, target, snapThreshold) {
-    if (!Number.isFinite(target)) return current;
+function liveGaugeValue(current, target, snapThreshold, dt = 1 / 60, response = 16) {
+    if (!Number.isFinite(target)) return Number.isFinite(current) ? current : 0;
+    if (!Number.isFinite(current)) return target;
 
     const difference = target - current;
     if (Math.abs(difference) <= snapThreshold) {
         return target;
     }
 
-    return target;
+    // Smooth live interpolation: prevents the gauge from jumping from poll-to-poll
+    // while still following fast ECU/demo changes quickly.
+    const alpha = clamp(1 - Math.exp(-response * dt), 0.08, 0.62);
+    return current + difference * alpha;
 }
 
 function updateQuickMetrics(vehicle) {
@@ -1137,6 +1180,9 @@ function updateCharts(vehicle) {
     if (!throttleChartPoints.length) {
         pushChartPoint(throttleChartPoints, numberFromValue(vehicle.throttle?.value));
     }
+    if (!o2ChartPoints.length) {
+        pushChartPoint(o2ChartPoints, numberFromValue(vehicle.o2_b1s1?.value || vehicle.o2_b1s2?.value));
+    }
 }
 
 function renderCharts(now) {
@@ -1148,6 +1194,8 @@ function renderCharts(now) {
         pushChartPoint(voltageChartPoints, numberFromValue(vehicle.control_voltage?.value || vehicle.voltage?.value));
         pushChartPoint(engineLoadChartPoints, numberFromValue(vehicle.engine_load?.value));
         pushChartPoint(throttleChartPoints, numberFromValue(vehicle.throttle?.value));
+        pushChartPoint(o2ChartPoints, numberFromValue(vehicle.o2_b1s1?.value || vehicle.o2_b1s2?.value));
+        recordGraphSample(now);
         lastChartSampleAt = now;
     }
 
@@ -1157,6 +1205,193 @@ function renderCharts(now) {
     drawLineChart("voltage-chart", voltageChartPoints, "#f59f00", 16);
     drawLineChart("engine-load-chart", engineLoadChartPoints, "#845ef7", 100);
     drawLineChart("throttle-chart", throttleChartPoints, "#12b886", 100);
+    drawLineChart("o2-chart", o2ChartPoints, "#495057", 1.2);
+}
+
+
+function currentGraphSample(now = performance.now()) {
+    const vehicle = currentDisplayPayload(lastLivePayload || {})?.vehicle || {};
+    return {
+        t: graphRecordingStartedAt ? Math.round(now - graphRecordingStartedAt) : 0,
+        rpm: Math.round(currentRpm),
+        speed: Math.round(currentSpeed),
+        coolant: numberFromValue(vehicle.coolant_temp?.value),
+        voltage: numberFromValue(vehicle.control_voltage?.value || vehicle.voltage?.value),
+        engineLoad: numberFromValue(vehicle.engine_load?.value),
+        throttle: numberFromValue(vehicle.throttle?.value)
+    };
+}
+
+function recordGraphSample(now) {
+    if (!graphRecordingActive) return;
+    graphRecordingSamples.push(currentGraphSample(now));
+    if (graphRecordingSamples.length > 24000) {
+        graphRecordingSamples.shift();
+    }
+    updateRecordingStatus();
+}
+
+function updateRecordingStatus() {
+    const button = byId("record-graphs-button");
+    const status = byId("recording-status");
+    if (button) {
+        button.textContent = graphRecordingActive ? "Stop Recording" : "Start Recording";
+        button.classList.toggle("danger-action", graphRecordingActive);
+        button.classList.toggle("secondary-action", !graphRecordingActive);
+    }
+    if (status) {
+        status.classList.toggle("is-recording", graphRecordingActive);
+        if (graphRecordingActive) {
+            const duration = graphRecordingStartedAt ? Math.round((performance.now() - graphRecordingStartedAt) / 1000) : 0;
+            status.textContent = `Recording graphs... ${duration}s / ${graphRecordingSamples.length} samples`;
+        } else if (graphRecordingSamples.length) {
+            status.textContent = `${graphRecordingSamples.length} graph samples recorded`;
+        } else {
+            status.textContent = "No recording active";
+        }
+    }
+}
+
+function escapeRecordingJson(data) {
+    return JSON.stringify(data).replace(/</g, "\\u003c");
+}
+
+function buildRecordingPlaybackHtml(samples) {
+    const exportedAt = new Date().toLocaleString();
+    const payload = {
+        appVersion: window.APP_VERSION || "",
+        exportedAt,
+        samples,
+        series: [
+            { key: "rpm", label: "RPM", color: "#e14d4d", max: 5000 },
+            { key: "speed", label: "Speed", color: "#0d6efd", max: 160 },
+            { key: "coolant", label: "Coolant", color: "#0ca678", max: 130 },
+            { key: "voltage", label: "ECU Voltage", color: "#f59f00", max: 16 },
+            { key: "engineLoad", label: "Engine Load", color: "#845ef7", max: 100 },
+            { key: "throttle", label: "Throttle", color: "#12b886", max: 100 }
+        ]
+    };
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OBD Graph Recording</title>
+<style>
+:root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#172033;background:#edf3f8}body{margin:0;padding:24px}.shell{max-width:1280px;margin:0 auto}.hero{background:#fff;border:1px solid #d5e0ea;border-radius:22px;padding:22px 24px;box-shadow:0 18px 44px rgba(34,62,96,.12);display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.eyebrow{color:#0d6efd;font-size:12px;font-weight:900;letter-spacing:.12em;text-transform:uppercase;margin:0 0 8px}h1{font-size:30px;margin:0 0 8px}.muted{color:#62748d;margin:0}.controls{display:flex;gap:10px;flex-wrap:wrap}button{border:1px solid #bdd0e5;background:linear-gradient(180deg,#fff,#eef5fc);border-radius:14px;color:#162237;cursor:pointer;font-weight:900;padding:12px 16px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}.card{background:#fff;border:1px solid #d5e0ea;border-radius:20px;padding:16px;box-shadow:0 12px 30px rgba(34,62,96,.08)}.card-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.card strong{font-size:17px}.value{color:#62748d;font-weight:900}canvas{background:#f6f9fc;border:1px solid #e0e8f1;border-radius:14px;width:100%;height:220px}@media(max-width:800px){.hero,.grid{grid-template-columns:1fr;display:grid}.controls{width:100%}button{width:100%}}</style>
+</head>
+<body>
+<div class="shell">
+<section class="hero">
+<div><p class="eyebrow">OBD Graph Playback</p><h1>Recorded Live Graphs</h1><p class="muted">Exported ${exportedAt}. ${samples.length} samples recorded.</p></div>
+<div class="controls"><button id="play">Play</button><button id="pause">Pause</button><button id="restart">Restart</button></div>
+</section>
+<div id="grid" class="grid"></div>
+</div>
+<script>
+const recording = ${escapeRecordingJson(payload)};
+let playing = true;
+let startedAt = performance.now();
+let pausedAt = 0;
+let cursorMs = 0;
+const duration = Math.max(...recording.samples.map(sample => sample.t), 1);
+const grid = document.getElementById('grid');
+recording.series.forEach(series => {
+  const card = document.createElement('section');
+  card.className = 'card';
+  card.innerHTML = '<div class="card-head"><strong>' + series.label + '</strong><span class="value" id="value-' + series.key + '">--</span></div><canvas id="chart-' + series.key + '" width="760" height="240"></canvas>';
+  grid.appendChild(card);
+});
+function draw(canvas, values, color, maxHint) {
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0,0,width,height);
+  ctx.fillStyle = '#f6f9fc'; ctx.fillRect(0,0,width,height);
+  ctx.strokeStyle = '#d6dee8'; ctx.lineWidth = 1;
+  for (let i=1;i<4;i++){const y=(height/4)*i;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(width,y);ctx.stroke();}
+  const clean = values.length ? values.map(v => Number.isFinite(Number(v)) ? Number(v) : 0) : [0,0];
+  const max = Math.max(maxHint, ...clean, 1);
+  const stepX = clean.length > 1 ? width / (clean.length - 1) : width;
+  ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
+  clean.forEach((value,index)=>{const x=stepX*index; const y=height-(Math.max(value,0)/max)*(height-16)-8; if(index===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);});
+  ctx.stroke();
+}
+function frame(now){
+  if(playing){cursorMs = Math.min(now - startedAt, duration);} 
+  const visible = recording.samples.filter(sample => sample.t <= cursorMs);
+  recording.series.forEach(series => {
+    const values = visible.map(sample => sample[series.key]);
+    const latest = values.length ? values[values.length - 1] : 0;
+    document.getElementById('value-' + series.key).textContent = Math.round(latest * 10) / 10;
+    draw(document.getElementById('chart-' + series.key), values, series.color, series.max);
+  });
+  if(cursorMs >= duration) playing = false;
+  requestAnimationFrame(frame);
+}
+document.getElementById('play').onclick=()=>{if(!playing){playing=true;startedAt=performance.now()-cursorMs;}};
+document.getElementById('pause').onclick=()=>{playing=false;pausedAt=cursorMs;};
+document.getElementById('restart').onclick=()=>{cursorMs=0;playing=true;startedAt=performance.now();};
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>`;
+}
+
+function downloadGraphRecording() {
+    if (!graphRecordingSamples.length) {
+        updateRecordingStatus();
+        return;
+    }
+
+    const html = buildRecordingPlaybackHtml(graphRecordingSamples.slice());
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `obd-graph-recording-${new Date().toISOString().replace(/[:.]/g, "-")}.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+}
+
+function toggleGraphRecording() {
+    if (graphRecordingActive) {
+        graphRecordingActive = false;
+        updateRecordingStatus();
+        downloadGraphRecording();
+        return;
+    }
+
+    graphRecordingSamples = [];
+    graphRecordingStartedAt = performance.now();
+    graphRecordingActive = true;
+    updateRecordingStatus();
+}
+
+async function checkForUpdates() {
+    if (!document.body?.dataset?.dashboardPage) return;
+    try {
+        const response = await fetch("/api/update-check", { signal: AbortSignal.timeout(3500) });
+        if (!response.ok) { setOfflineIndicator(true); return; }
+        const result = await response.json();
+        setOfflineIndicator(false);
+        if (!result.update_available) return;
+
+        const box = byId("update-notification");
+        if (!box) return;
+        setText("update-title", "Update available");
+        setText("update-message", `You are using ${result.current_version}. New version ${result.latest_version} is available.`);
+        const link = byId("update-link");
+        if (link) {
+            link.href = result.download_url || "#";
+        }
+        box.hidden = false;
+    } catch (error) {
+        setOfflineIndicator(true);
+    }
 }
 
 function updateHealth(health) {
@@ -1488,7 +1723,22 @@ function toggleSimpleMode() {
 }
 
 function exportScanReport() {
+    const modal = byId("export-modal");
+    if (modal) {
+        modal.hidden = false;
+        return;
+    }
     window.location.href = "/api/report/export";
+}
+
+function closeExportModal() {
+    const modal = byId("export-modal");
+    if (modal) modal.hidden = true;
+}
+
+function exportScanReportFormat(format) {
+    closeExportModal();
+    window.location.href = `/api/report/export?format=${encodeURIComponent(format)}`;
 }
 
 function formatEngine(decoded) {
@@ -1659,8 +1909,8 @@ function renderGauges(now = performance.now()) {
     const dt = clamp(lastGaugeFrameAt ? (now - lastGaugeFrameAt) / 1000 : 1 / 60, 1 / 240, 0.05);
     lastGaugeFrameAt = now;
 
-    currentRpm = liveGaugeValue(currentRpm, targetRpm, RPM_DIRECT_SNAP);
-    currentSpeed = liveGaugeValue(currentSpeed, targetSpeed, SPEED_DIRECT_SNAP);
+    currentRpm = liveGaugeValue(currentRpm, targetRpm, RPM_DIRECT_SNAP, dt, RPM_SMOOTH_RESPONSE);
+    currentSpeed = liveGaugeValue(currentSpeed, targetSpeed, SPEED_DIRECT_SNAP, dt, SPEED_SMOOTH_RESPONSE);
 
     const rpmAngle = mapRange(currentRpm, 0, TACH_MAX_RPM, TACH_MIN_DEG, TACH_MAX_DEG);
     const speedAngle = mapRange(currentSpeed, 0, SPEED_MAX, TACH_MIN_DEG, TACH_MAX_DEG);
@@ -1943,6 +2193,7 @@ async function reconnectObd() {
         updateFreezeUi();
     resultElement.innerText = result.message || tr("manual_reconnect_started", "Reconnect started.");
         fetchData();
+checkForUpdates();
     } catch (error) {
         console.error(error);
         resultElement.innerText = error.message || tr("manual_reconnect_failed", "Reconnect failed.");
@@ -2165,6 +2416,7 @@ async function savePort(event) {
         renderPortOptions(result.detected_ports || [], result.obd_port || "");
         resultElement.innerText = result.message || tr("port_saved", "COM port saved.");
         fetchData();
+checkForUpdates();
     } catch (error) {
         console.error(error);
         resultElement.innerText = error.message || tr("port_save_failed", "Could not save COM port.");
@@ -2192,6 +2444,7 @@ async function toggleDemoMode() {
         updateDemoModeUi();
         await loadConfig();
         fetchData();
+checkForUpdates();
     } catch (error) {
         console.error(error);
     } finally {
@@ -2224,6 +2477,7 @@ async function toggleLimitedMode() {
         limitedMode = Boolean(result.limited_mode);
         updateLimitedModeUi();
         fetchData();
+checkForUpdates();
     } catch (error) {
         console.error(error);
         limitedMode = !limitedMode;
@@ -2257,6 +2511,7 @@ async function setPollProfile(profile) {
         updatePollProfileUi(result.poll_profile || { id: pollProfile });
         fetchSupportedSensors();
         fetchData();
+checkForUpdates();
     } catch (error) {
         console.error(error);
         updatePollProfileUi({ id: pollProfile });
@@ -2284,6 +2539,7 @@ async function setDemoPreset(preset) {
         storeDemoPresets(result.demo_presets || []);
         updateDemoModeUi();
         fetchData();
+checkForUpdates();
     } catch (error) {
         console.error(error);
     } finally {
@@ -2425,6 +2681,7 @@ async function clearDTC() {
             message: tr("clear_codes_sent_verify", "Clear command sent. Run a new scan to verify the ECU is clean.")
         });
         fetchData();
+checkForUpdates();
     } catch (error) {
         console.error(error);
         if (resultElement) {
@@ -2685,6 +2942,7 @@ function renderGarageNotes(notes) {
                 <strong>${escapeHtml(note.title || tr("garage_note", "Garage note"))}</strong>
                 <div class="garage-note-meta">${identityChips || "<span>--</span>"}</div>
                 <p>${escapeHtml(note.note || "")}</p>
+                ${note.payload?.garage_attachment?.data ? `<a class="secondary-action compact-action" href="${note.payload.garage_attachment.data}" target="_blank" rel="noopener">Open photo</a>` : ""}
             </div>
             <div class="garage-note-actions">
                 <button class="icon-action garage-note-edit" type="button" data-garage-note="${editPayload}" aria-label="${escapeHtml(tr("garage_edit", "Edit garage note"))}">&#9998;</button>
@@ -2861,6 +3119,18 @@ async function deleteGarageNote(event) {
     }
 }
 
+function readGaragePhotoAttachment() {
+    const input = byId("garage-note-photo");
+    const file = input?.files?.[0];
+    if (!file) return Promise.resolve(null);
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ name: file.name, type: file.type, size: file.size, data: reader.result });
+        reader.onerror = () => reject(reader.error || new Error("Could not read photo attachment."));
+        reader.readAsDataURL(file);
+    });
+}
+
 async function saveGarageNote(event) {
     event.preventDefault();
     const form = event.currentTarget;
@@ -2877,6 +3147,7 @@ async function saveGarageNote(event) {
         : tr("garage_saving", "Saving garage note..."));
 
     try {
+        const attachment = editingGarageNoteId ? null : await readGaragePhotoAttachment();
         const url = editingGarageNoteId ? `/api/garage-notes/${editingGarageNoteId}` : "/api/garage-notes";
         const response = await fetch(url, {
             method: editingGarageNoteId ? "PUT" : "POST",
@@ -2886,7 +3157,8 @@ async function saveGarageNote(event) {
                 plate: validation.plate,
                 title: byId("garage-note-title")?.value || "",
                 mileage: byId("garage-note-mileage")?.value || "",
-                note: validation.noteText
+                note: validation.noteText,
+                attachment
             })
         });
         const result = await response.json();
@@ -2950,6 +3222,52 @@ function initPollProfileButtons() {
     });
 }
 
+async function initDashboardSetup() {
+    const modal = byId("setup-modal");
+    if (!modal || !document.body?.dataset?.dashboardPage) return;
+    try {
+        const response = await fetch("/api/setup");
+        const setup = await response.json();
+        modal.hidden = Boolean(setup.completed);
+    } catch {
+        modal.hidden = false;
+    }
+}
+
+function initSetupStorageToggle() {
+    const mysql = byId("setup-mysql-fields");
+    const updateMysqlFields = () => {
+        const selectedStorage = document.querySelector('input[name="setup-storage"]:checked')?.value || "sqlite";
+        if (!mysql) return;
+        mysql.hidden = selectedStorage !== "mysql";
+    };
+
+    document.querySelectorAll('input[name="setup-storage"]').forEach((input) => {
+        input.addEventListener("change", updateMysqlFields);
+    });
+
+    updateMysqlFields();
+}
+
+async function saveDashboardSetup() {
+    const storage = document.querySelector('input[name="setup-storage"]:checked')?.value || "sqlite";
+    const payload = {
+        storage_type: storage,
+        mysql: {
+            host: byId("setup-mysql-host")?.value || "",
+            database: byId("setup-mysql-database")?.value || "",
+            user: byId("setup-mysql-user")?.value || ""
+        }
+    };
+    const response = await fetch("/api/setup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const result = await response.json();
+    if (response.ok && result.success) {
+        const modal = byId("setup-modal");
+        if (modal) modal.hidden = true;
+    }
+}
+
+
 function on(id, eventName, handler) {
     const element = byId(id);
     if (element) {
@@ -2972,6 +3290,12 @@ on("plate-form", "submit", savePlateLookup);
 on("scan-codes-button", "click", scanCodes);
 on("refresh-supported-button", "click", fetchSupportedSensors);
 on("save-scan-button", "click", saveScanToDatabase);
+on("record-graphs-button", "click", toggleGraphRecording);
+on("update-close", "click", () => { const box = byId("update-notification"); if (box) box.hidden = true; });
+on("setup-save-button", "click", saveDashboardSetup);
+on("export-html-button", "click", () => exportScanReportFormat("html"));
+on("export-csv-button", "click", () => exportScanReportFormat("csv"));
+on("export-cancel-button", "click", closeExportModal);
 on("reset-ui-cache-button", "click", resetUiCache);
 on("garage-clear-filter-button", "click", clearGarageFilter);
 on("garage-export-button", "click", exportGarageNotes);
@@ -3020,6 +3344,8 @@ if (garageSearchInput) {
     });
 }
 
+initSetupStorageToggle();
+initDashboardSetup();
 initLanguageSwitcher();
 initPortDropdown();
 initNavigation();
@@ -3036,6 +3362,7 @@ fetchScanHistory();
 fetchGarageNotes();
 renderVehicleLookupHistory();
 fetchData();
+checkForUpdates();
 window.addEventListener("load", () => {
     positionGaugeTicks();
     window.requestAnimationFrame(positionGaugeTicks);

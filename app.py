@@ -3,6 +3,8 @@ import threading
 import time
 import traceback
 import json
+import csv
+import io
 import re
 from html import escape
 from pathlib import Path
@@ -12,6 +14,9 @@ from urllib.request import Request, urlopen
 
 from config import (
     APP_VERSION,
+    UPDATE_CHECK_CONFIG_URL,
+    UPDATE_CHECK_TIMEOUT,
+    UPDATE_DOWNLOAD_URL,
     MAX_POLL_INTERVAL,
     OBD_CONNECT_ATTEMPTS,
     OBD_CONNECT_RETRY_DELAY,
@@ -90,6 +95,38 @@ def localized_jsonify(payload, status_code=200):
     return jsonify(localize_payload(payload, current_language())), status_code
 
 
+def parse_version_tuple(value):
+    parts = re.findall(r"\d+", str(value or ""))
+    return tuple(int(part) for part in parts[:3]) if parts else (0, 0, 0)
+
+
+def is_newer_version(latest, current):
+    latest_tuple = parse_version_tuple(latest)
+    current_tuple = parse_version_tuple(current)
+    length = max(len(latest_tuple), len(current_tuple), 3)
+    latest_tuple += (0,) * (length - len(latest_tuple))
+    current_tuple += (0,) * (length - len(current_tuple))
+    return latest_tuple > current_tuple
+
+
+def fetch_latest_github_version():
+    if not UPDATE_CHECK_CONFIG_URL:
+        return ""
+
+    request_obj = Request(
+        UPDATE_CHECK_CONFIG_URL,
+        headers={
+            "User-Agent": "OBD-Scanner-Update-Check",
+            "Accept": "text/plain",
+        },
+    )
+    with urlopen(request_obj, timeout=UPDATE_CHECK_TIMEOUT) as response:
+        content = response.read().decode("utf-8", errors="replace")
+
+    match = re.search(r'''APP_VERSION\s*=\s*["']([^"']+)["']''', content)
+    return match.group(1).strip() if match else ""
+
+
 @app.context_processor
 def inject_translations():
     lang = current_language()
@@ -120,6 +157,69 @@ def localize_json_response(response):
     return response
 
 DB_PATH = db_path_from_file(__file__)
+DASHBOARD_SETUP_PATH = Path(__file__).with_name("dashboard_setup.json")
+DASHBOARD_RUNTIME_PATH = Path(__file__).with_name("dashboard_runtime.json")
+
+
+def load_json_file(path, default):
+    try:
+        if path.exists():
+            with path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, dict):
+                return {**default, **data}
+    except Exception as e:
+        log_error("Read JSON state", e)
+    return dict(default)
+
+
+def save_json_file(path, payload):
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def get_dashboard_setup():
+    return load_json_file(DASHBOARD_SETUP_PATH, {
+        "completed": False,
+        "storage_type": "sqlite",
+        "sqlite_file": str(DB_PATH.name),
+        "mysql": {"host": "", "database": "", "user": ""},
+        "created_at": "",
+        "updated_at": "",
+    })
+
+
+def infer_obd_bus_mode(protocol):
+    text = str(protocol or "").lower()
+    if "simulator" in text:
+        return {"mode": "Demo", "confidence": "high", "detail": "Demo mode is active."}
+    if "can" in text or "iso 15765" in text:
+        if "500" in text or "15765" in text:
+            return {"mode": "HS-CAN", "confidence": "medium", "detail": "Standard OBD-II CAN normally runs on the high-speed CAN pair."}
+        if "125" in text or "ms" in text:
+            return {"mode": "MS-CAN", "confidence": "medium", "detail": "Protocol text hints at medium-speed CAN."}
+        return {"mode": "HS-CAN", "confidence": "low", "detail": "Generic ELM adapters expose standard OBD-II CAN; true MS-CAN usually needs a switchable/STN adapter."}
+    return {"mode": "Unknown", "confidence": "low", "detail": "No CAN protocol detected yet."}
+
+
+def get_runtime_state():
+    return load_json_file(DASHBOARD_RUNTIME_PATH, {
+        "warning_thresholds": {"coolant_temp_c": 100},
+        "fuel_trim_history": [],
+    })
+
+
+def append_fuel_trim_history(payload):
+    vehicle = payload.get("vehicle", {})
+    stft = number_from_value(vehicle.get("short_fuel_trim_1", {}).get("value"))
+    ltft = number_from_value(vehicle.get("long_fuel_trim_1", {}).get("value"))
+    if stft is None and ltft is None:
+        return
+    state = get_runtime_state()
+    history = state.get("fuel_trim_history") if isinstance(state.get("fuel_trim_history"), list) else []
+    history.append({"time": payload.get("created_at"), "stft": stft, "ltft": ltft})
+    state["fuel_trim_history"] = history[-500:]
+    save_json_file(DASHBOARD_RUNTIME_PATH, state)
 
 connection = None
 vehicle_data = {}
@@ -587,6 +687,8 @@ LIVE_COMMANDS = {
     "timing_advance": ("Timing advance", get_command("TIMING_ADVANCE")),
     "short_fuel_trim_1": ("Short fuel trim bank 1", get_command("SHORT_FUEL_TRIM_1")),
     "long_fuel_trim_1": ("Long fuel trim bank 1", get_command("LONG_FUEL_TRIM_1")),
+    "o2_b1s1": ("O2 sensor B1S1", get_command("O2_B1S1")),
+    "o2_b1s2": ("O2 sensor B1S2", get_command("O2_B1S2")),
     "maf": ("MAF air flow", get_command("MAF")),
     "fuel_level": ("Fuel level", get_command("FUEL_LEVEL")),
     "runtime": ("Engine runtime", get_command("RUN_TIME")),
@@ -1052,6 +1154,25 @@ def enrich_connection_quality(status, connection_quality):
     return quality
 
 
+
+def build_mode06_snapshot():
+    # Mode 06 support differs heavily per vehicle and adapter. python-obd may not expose
+    # decoded Mode 06 on every install, so this returns a safe structured snapshot.
+    tests = []
+    try:
+        command = get_command("MONITOR_O2_B1S1") or get_command("MONITOR_O2_B1S2")
+        if connection and command:
+            value = safe_query(command)
+            if value not in (None, "N/A"):
+                tests.append({"name": "O2 monitor", "raw": str(value), "status": "available"})
+    except Exception as e:
+        log_error("Mode 06", e)
+    return {
+        "available": bool(tests),
+        "tests": tests,
+        "note": "Mode 06 raw monitor tests are vehicle-specific. Generic ELM adapters may expose limited data only.",
+    }
+
 def current_scan_payload():
     with state_lock:
         status = dict(obd_status)
@@ -1105,6 +1226,10 @@ def current_scan_payload():
         "battery_check": build_battery_check(),
         "pid_support": build_pid_support_summary(),
         "standard_obd_only": True,
+        "obd_bus_mode": infer_obd_bus_mode(status.get("protocol")),
+        "dashboard_setup": get_dashboard_setup(),
+        "runtime_state": get_runtime_state(),
+        "mode06": build_mode06_snapshot(),
         "demo": {
             "enabled": bool(status.get("demo_mode")),
             "preset": preset_id,
@@ -1113,6 +1238,7 @@ def current_scan_payload():
     }
     payload["report"] = build_purchase_report(payload)
     payload["simple_summary"] = build_simple_summary(payload)
+    append_fuel_trim_history(payload)
     return payload
 
 
@@ -1134,11 +1260,13 @@ def get_recent_garage_notes(limit=SCAN_HISTORY_LIMIT):
     return storage_get_recent_garage_notes(DB_PATH, limit)
 
 
-def save_garage_note_snapshot(vin, plate, title, mileage, note):
+def save_garage_note_snapshot(vin, plate, title, mileage, note, attachment=None):
     payload = current_scan_payload()
     created_at = payload["created_at"]
     vin = normalize_vin(vin)
     plate = normalize_garage_plate(plate)
+    if attachment:
+        payload["garage_attachment"] = attachment
     return storage_save_garage_note(
         DB_PATH,
         created_at,
@@ -2258,6 +2386,90 @@ def dashboard():
         return "Dashboard could not load. Check the console.", 500
 
 
+@app.route("/api/update-check")
+def api_update_check():
+    try:
+        latest_version = fetch_latest_github_version()
+        update_available = bool(latest_version and is_newer_version(latest_version, APP_VERSION))
+        return jsonify({
+            "success": True,
+            "current_version": APP_VERSION,
+            "latest_version": latest_version or APP_VERSION,
+            "update_available": update_available,
+            "download_url": UPDATE_DOWNLOAD_URL,
+        })
+    except Exception as e:
+        log_error("Update check", e)
+        return jsonify({
+            "success": False,
+            "current_version": APP_VERSION,
+            "latest_version": APP_VERSION,
+            "update_available": False,
+            "download_url": UPDATE_DOWNLOAD_URL,
+            "message": "Update check could not be completed.",
+        })
+
+
+
+
+def render_scan_csv(payload):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["section", "key", "value"])
+    writer.writerow(["meta", "created_at", payload.get("created_at", "")])
+    writer.writerow(["status", "protocol", payload.get("status", {}).get("protocol", "")])
+    for key, item in (payload.get("vehicle") or {}).items():
+        writer.writerow(["live", item.get("label", key), item.get("value", "")])
+    for group, codes in (payload.get("dtc") or {}).items():
+        for code in codes:
+            writer.writerow([f"dtc_{group}", code.get("code", ""), code.get("description_en") or code.get("description") or ""])
+    for item in (payload.get("readiness") or {}).get("monitors", []):
+        writer.writerow(["readiness", item.get("name", ""), "ready" if item.get("complete") else "incomplete"])
+    return output.getvalue()
+
+@app.route("/api/setup", methods=["GET", "POST"])
+def api_setup():
+    if request.method == "GET":
+        return jsonify(get_dashboard_setup())
+    data = request.get_json(silent=True) or {}
+    storage_type = str(data.get("storage_type") or "sqlite").lower()
+    if storage_type not in {"sqlite", "mysql"}:
+        return jsonify({"success": False, "message": "Choose sqlite or mysql."}), 400
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    current = get_dashboard_setup()
+    setup = {
+        **current,
+        "completed": True,
+        "storage_type": storage_type,
+        "sqlite_file": str(data.get("sqlite_file") or current.get("sqlite_file") or DB_PATH.name),
+        "mysql": data.get("mysql") if isinstance(data.get("mysql"), dict) else current.get("mysql", {}),
+        "created_at": current.get("created_at") or now,
+        "updated_at": now,
+    }
+    save_json_file(DASHBOARD_SETUP_PATH, setup)
+    return jsonify({"success": True, "setup": setup})
+
+@app.route("/api/runtime", methods=["GET", "POST"])
+def api_runtime():
+    if request.method == "GET":
+        return jsonify(get_runtime_state())
+    data = request.get_json(silent=True) or {}
+    state = get_runtime_state()
+    if isinstance(data.get("warning_thresholds"), dict):
+        state["warning_thresholds"] = {**state.get("warning_thresholds", {}), **data["warning_thresholds"]}
+    save_json_file(DASHBOARD_RUNTIME_PATH, state)
+    return jsonify({"success": True, "runtime_state": state})
+
+@app.route("/api/report/export.csv")
+def api_report_export_csv():
+    payload = current_scan_payload()
+    filename = f"obd-scan-report-{time.strftime('%Y%m%d-%H%M%S')}.csv"
+    return Response(
+        render_scan_csv(payload),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
 @app.route("/api/status")
 def api_status():
     with state_lock:
@@ -2279,6 +2491,9 @@ def api_status():
         **status,
         "poll_profile": get_poll_profile(),
         "connection_quality": connection_quality,
+        "obd_bus_mode": infer_obd_bus_mode(status.get("protocol")),
+        "dashboard_setup": get_dashboard_setup(),
+        "runtime_state": get_runtime_state(),
         "session_state": build_scanner_session_state(
             status,
             connection_quality,
@@ -2291,13 +2506,25 @@ def api_status():
 def api_gauges():
     with state_lock:
         status = dict(obd_status)
-        vehicle = {
-            "rpm": dict(vehicle_data.get("rpm", {"label": "RPM", "value": "N/A"})),
-            "speed": dict(vehicle_data.get("speed", {"label": "Speed", "value": "N/A"})),
-        }
+        demo_enabled = bool(status.get("demo_mode")) or get_demo_mode_enabled()
+
+        if demo_enabled:
+            demo_speed = float(demo_drive_state.get("speed_kmh", 0.0))
+            demo_preset = normalize_demo_preset(demo_drive_state.get("preset", get_demo_preset_name()))
+            demo_snapshot = build_demo_vehicle_snapshot(demo_speed, demo_preset)
+            vehicle = {
+                "rpm": dict(demo_snapshot.get("rpm", {"label": "RPM", "value": "N/A"})),
+                "speed": dict(demo_snapshot.get("speed", {"label": "Speed", "value": "N/A"})),
+            }
+        else:
+            vehicle = {
+                "rpm": dict(vehicle_data.get("rpm", {"label": "RPM", "value": "N/A"})),
+                "speed": dict(vehicle_data.get("speed", {"label": "Speed", "value": "N/A"})),
+            }
+
     return jsonify({
         "connected": bool(status.get("connected")),
-        "demo_mode": bool(status.get("demo_mode")),
+        "demo_mode": bool(demo_enabled),
         "vehicle": vehicle,
     })
 
@@ -2360,6 +2587,10 @@ def api_report():
 @app.route("/api/report/export")
 def api_report_export():
     payload = current_scan_payload()
+    export_format = str(request.args.get("format") or "html").lower()
+    if export_format == "csv":
+        filename = f"obd-scan-report-{time.strftime('%Y%m%d-%H%M%S')}.csv"
+        return Response(render_scan_csv(payload), mimetype="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
     filename = f"obd-scan-report-{time.strftime('%Y%m%d-%H%M%S')}.html"
     return Response(
         render_export_html(payload),
@@ -2844,7 +3075,7 @@ def api_garage_notes_save():
         }), 400
 
     try:
-        saved = save_garage_note_snapshot(vin, plate, title, mileage, note)
+        saved = save_garage_note_snapshot(vin, plate, title, mileage, note, payload.get("attachment"))
         return jsonify({
             "success": True,
             "note": saved,

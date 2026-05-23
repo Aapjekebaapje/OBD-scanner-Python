@@ -3,7 +3,7 @@
     box-sizing: border-box;
 }
 
-/* v0.4.3 motion and page layout refresh.
+/* v0.5.0 motion and page layout refresh.
    Dashboard HTML stays unchanged; these rules reshape the individual pages. */
 @keyframes pageLayerIn {
     from {
@@ -4768,3 +4768,171 @@ select:focus {
         width: 100%;
     }
 }
+
+
+/* v0.5.0 update notification and graph recording */
+.update-notification {
+    align-items: center;
+    background: linear-gradient(180deg, #ffffff 0%, #f4f8fc 100%);
+    border: 1px solid #cfe0f3;
+    border-radius: 18px;
+    box-shadow: 0 18px 42px rgba(34, 62, 96, 0.18);
+    display: flex;
+    gap: 14px;
+    justify-content: space-between;
+    left: 50%;
+    max-width: min(720px, calc(100vw - 32px));
+    padding: 14px 16px;
+    position: fixed;
+    top: 18px;
+    transform: translateX(-50%);
+    width: 720px;
+    z-index: 80;
+}
+
+.update-notification[hidden] {
+    display: none;
+}
+
+.update-notification strong {
+    color: #162237;
+    display: block;
+    font-size: 15px;
+    margin-bottom: 3px;
+}
+
+.update-notification p {
+    color: #62748d;
+    font-size: 13px;
+    margin: 0;
+}
+
+.update-close {
+    align-items: center;
+    background: #edf4fb;
+    border: 1px solid #ccdae9;
+    border-radius: 999px;
+    color: #536780;
+    cursor: pointer;
+    display: inline-flex;
+    font-size: 13px;
+    font-weight: 900;
+    height: 30px;
+    justify-content: center;
+    width: 30px;
+}
+
+.graph-record-heading {
+    align-items: flex-start;
+    gap: 14px;
+}
+
+.recording-actions {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: flex-end;
+}
+
+.recording-status {
+    background: #eef5fc;
+    border: 1px solid #d1deea;
+    border-radius: 999px;
+    color: #62748d;
+    font-size: 12px;
+    font-weight: 800;
+    padding: 8px 11px;
+}
+
+.recording-status.is-recording {
+    background: #fff1f1;
+    border-color: #f2b5b5;
+    color: #a73333;
+}
+
+@media (max-width: 720px) {
+    .update-notification,
+    .graph-record-heading,
+    .recording-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .update-notification {
+        top: 10px;
+    }
+}
+
+
+.update-flyin {
+    animation: updateSlideIn .45s cubic-bezier(.2,.8,.2,1) both;
+    backdrop-filter: blur(18px);
+}
+
+@keyframes updateSlideIn {
+    from { opacity: 0; transform: translate(-50%, -18px) scale(.98); }
+    to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+.offline-indicator {
+    align-items: center;
+    background: linear-gradient(135deg, #fff7ed, #fff);
+    border: 1px solid #fed7aa;
+    border-radius: 18px;
+    box-shadow: 0 18px 45px rgba(154, 91, 0, .14);
+    display: flex;
+    gap: 10px;
+    left: 50%;
+    padding: 12px 16px;
+    position: fixed;
+    top: 82px;
+    transform: translateX(-50%);
+    width: min(680px, calc(100vw - 28px));
+    z-index: 79;
+}
+.offline-indicator[hidden] { display: none; }
+.offline-indicator strong { color: #9a3412; }
+.offline-indicator span { color: #7c2d12; font-size: 13px; }
+
+.setup-modal {
+    align-items: center;
+    background: rgba(10, 18, 32, .48);
+    backdrop-filter: blur(12px);
+    display: flex;
+    inset: 0;
+    justify-content: center;
+    padding: 20px;
+    position: fixed;
+    z-index: 120;
+}
+.setup-modal[hidden] { display: none; }
+.setup-card {
+    animation: setupPop .35s cubic-bezier(.2,.8,.2,1) both;
+    background: #fff;
+    border: 1px solid #d7e3ef;
+    border-radius: 28px;
+    box-shadow: 0 30px 80px rgba(18, 36, 62, .26);
+    max-width: 560px;
+    padding: 26px;
+    width: 100%;
+}
+@keyframes setupPop { from { opacity: 0; transform: translateY(16px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.setup-options { display: grid; gap: 12px; margin: 18px 0; }
+.setup-option {
+    align-items: center;
+    border: 1px solid #d8e4f0;
+    border-radius: 18px;
+    cursor: pointer;
+    display: flex;
+    gap: 12px;
+    padding: 14px;
+}
+.setup-option small { color: #6b7d92; display: block; margin-top: 3px; }
+.setup-mysql-fields { display: grid; gap: 10px; margin-bottom: 14px; }
+.setup-mysql-fields[hidden] { display: none !important; }
+.setup-mysql-fields input, .garage-note-form input[type="file"] { border: 1px solid #d2dfec; border-radius: 14px; padding: 11px 12px; }
+.setup-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.dashboard-indicators { margin: 8px 0 12px; }
+.status-pill.is-warning { background: #fff1f2; border-color: #fecdd3; color: #be123c; animation: pulseWarning 1s linear infinite; }
+@keyframes pulseWarning { 50% { box-shadow: 0 0 0 6px rgba(225, 29, 72, .12); } }

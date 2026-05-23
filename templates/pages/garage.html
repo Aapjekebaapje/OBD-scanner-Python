@@ -24,6 +24,9 @@
                 <input id="garage-note-mileage" name="mileage" type="text" maxlength="40" placeholder="{{ i18n.garage.mileage_placeholder }}">
                 <label for="garage-note-text">{{ i18n.garage.note_label }}</label>
                 <textarea id="garage-note-text" name="note" rows="7" required placeholder="{{ i18n.garage.note_placeholder }}"></textarea>
+                <label for="garage-note-photo">Photo attachment</label>
+                <input id="garage-note-photo" name="photo" type="file" accept="image/*">
+                <p class="panel-note">Photos are saved as base64 in the note snapshot payload.</p>
                 <div class="garage-form-actions">
                     <button id="garage-note-submit" class="secondary-action" type="submit">{{ i18n.garage.save }}</button>
                     <button id="garage-note-cancel-edit" class="secondary-action" type="button" hidden>{{ i18n.garage.cancel_edit }}</button>
@@ -32,7 +35,9 @@
             <p id="garage-note-result" class="panel-note">{{ i18n.garage.result }}</p>
         </article>
 
-        <article class="panel garage-history-panel">
+
+
+                <article class="panel garage-history-panel">
             <div class="panel-heading">
                 <div>
                     <p class="eyebrow">{{ i18n.garage.history_eyebrow }}</p>
